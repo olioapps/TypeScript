@@ -54,6 +54,7 @@
         "codefixes/fixSpelling.ts",
         "codefixes/fixAddMissingMember.ts",
         "codefixes/fixCannotFindModule.ts",
+        "codefixes/generateTypes.ts",
         "codefixes/fixClassDoesntImplementInheritedAbstractMember.ts",
         "codefixes/fixClassSuperMustPrecedeThisAccess.ts",
         "codefixes/fixConstructorForDerivedNeedSuperCall.ts",

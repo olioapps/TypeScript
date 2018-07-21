@@ -714,6 +714,11 @@ namespace ts.textChanges {
 
     export type ValidateNonFormattedText = (node: Node, text: string) => void;
 
+    //!
+    export function newFileTextChange(fileName: string, text: string) {
+        return { fileName, textChanges: [createTextChange(createTextSpan(0, 0), text)], isNewFile: true };
+    }
+
     namespace changesToText {
         export function getTextChangesFromChanges(changes: ReadonlyArray<Change>, newLineCharacter: string, formatContext: formatting.FormatContext, validate: ValidateNonFormattedText | undefined): FileTextChanges[] {
             return group(changes, c => c.sourceFile.path).map(changesInFile => {
@@ -738,7 +743,7 @@ namespace ts.textChanges {
             const sourceFile = createSourceFile(fileName, nonFormattedText, ScriptTarget.ESNext, /*setParentNodes*/ true);
             const changes = formatting.formatDocument(sourceFile, formatContext);
             const text = applyChanges(nonFormattedText, changes);
-            return { fileName, textChanges: [createTextChange(createTextSpan(0, 0), text)], isNewFile: true };
+            return newFileTextChange(fileName, text);
         }
 
         function computeNewText(change: Change, sourceFile: SourceFile, newLineCharacter: string, formatContext: formatting.FormatContext, validate: ValidateNonFormattedText | undefined): string {
