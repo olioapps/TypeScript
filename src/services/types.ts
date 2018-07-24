@@ -231,6 +231,10 @@ namespace ts {
 
         isKnownTypesPackageName?(name: string): boolean;
         installPackage?(options: InstallPackageOptions): Promise<ApplyCodeActionCommandResult>;
+
+        //TODO: optional
+        //NOTE: should *not* fail. Use try-catch.
+        tryRequire(fileName: string): unknown;
     }
 
     export interface UserPreferences {

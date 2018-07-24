@@ -481,6 +481,26 @@ namespace ts {
         public fileExists(path: string): boolean {
             return this.shimHost.fileExists(path);
         }
+
+        public tryRequire(fileName: string): unknown {
+            return tryRequireFromString(this.readFile(fileName), fileName);
+        }
+    }
+
+    //https://stackoverflow.com/questions/17581830/load-node-js-module-from-string-in-memory#17585470
+    export function tryRequireFromString(src: string | undefined, fileName: string): unknown {
+        if (src === undefined) {
+            return undefined;
+        }
+
+        const Module = module.constructor;
+        const m = new (Module as any)();
+        try {
+            m._compile(src, fileName);
+            return m.exports;
+        } catch {
+            return undefined;
+        }
     }
 
     export class CoreServicesShimHostAdapter implements ParseConfigHost, ModuleResolutionHost, JsTyping.TypingResolutionHost {

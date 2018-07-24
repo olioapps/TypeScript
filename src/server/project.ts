@@ -252,6 +252,14 @@ namespace ts.server {
         installPackage(options: InstallPackageOptions): Promise<ApplyCodeActionCommandResult> {
             return this.typingsCache.installPackage({ ...options, projectName: this.projectName, projectRootPath: this.toPath(this.currentDirectory) });
         }
+        tryRequire(fileName: string): unknown {
+            try {
+                return require(fileName);
+            } catch {
+                return undefined;
+            }
+        }
+
         private get typingsCache(): TypingsCache {
             return this.projectService.typingsCache;
         }

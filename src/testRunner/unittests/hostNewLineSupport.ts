@@ -15,6 +15,7 @@ namespace ts {
                 getScriptSnapshot: name => snapFor(name),
                 getDefaultLibFileName: () => "lib.d.ts",
                 getCurrentDirectory: () => "",
+                tryRequire: notImplemented, //remove, optional
             };
             return createLanguageService(lshost);
         }

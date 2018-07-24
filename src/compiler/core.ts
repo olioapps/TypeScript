@@ -140,6 +140,8 @@ namespace ts {
             private data = createDictionaryObject<T>();
             public size = 0;
 
+            __invariant: T;
+
             get(key: string): T | undefined {
                 return this.data[key];
             }

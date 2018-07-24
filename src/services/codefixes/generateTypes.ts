@@ -617,7 +617,7 @@ namespace ts.dom {
         InAmbientNamespace = 1 << 1
     }
 
-    export function never(x: never, err: string): never {
+    export function never(_: never, err: string): never { //!
         throw new Error(err);
     }
 
@@ -1278,9 +1278,7 @@ namespace ts.dom {
 /* @internal */
 namespace ts {
     //rt type
-    export function generateTypesForModule(packageName: string, modulePath: string): string | undefined {
-        const moduleValue = tryRequire(modulePath);
-        if (moduleValue === undefined) return undefined;
+    export function generateTypesForModule(packageName: string, moduleValue: unknown): string | undefined {
         const localName = forceAsIdentifier(packageName); //use just last part plz...
         const decls = getTopLevelDeclarations(localName, moduleValue);
         // If we get back just a namespace, we can avoid writing an export=
@@ -1311,14 +1309,14 @@ namespace ts {
         Unknown = 1 << 5,
     }
 
-    const builtins: { [name: string]: (new (...args: any[]) => any) | undefined } = {
+    const builtins: { [name: string]: (new (...args: unknown[]) => any) | undefined } = {
         Date,
         RegExp,
         Map: (typeof Map !== 'undefined') ? Map : undefined,
         //HTMLElement: (typeof HTMLElement !== 'undefined') ? HTMLElement : undefined,
     };
 
-    function getValueTypes(value: any): ValueTypes {
+    function getValueTypes(value: unknown): ValueTypes {
         if (typeof value === 'object') {
             // Objects can't be callable, so no need to check for class / function
             return ValueTypes.Object;
@@ -1338,22 +1336,13 @@ namespace ts {
     }
 
     // A class has clodule properties if it has any classes. Anything else can be written with 'static'
-    function hasCloduleProperties(c: any): boolean {
-        return getKeysOfObject(c).some(k => isClasslike(c[k]));
+    function hasCloduleProperties(c: object): boolean {
+        return getKeysOfObject(c).some(k => isClasslike((c as any)[k])); //!
     }
 
     // A function has fundule properties if it has any own properties not belonging to Function.prototype
-    function hasFunduleProperties(fn: any): boolean {
+    function hasFunduleProperties(fn: object): boolean {
         return getKeysOfObject(fn).some(k => (<any> Function)[k] === undefined);
-    }
-
-
-    function tryRequire(modulePath: string): unknown {
-        try {
-            return require(modulePath);
-        } catch {
-            return undefined;
-        }
     }
 
     //name
@@ -1408,12 +1397,12 @@ namespace ts {
         return reservedWords.indexOf(s) < 0;
     }
 
-    function isClasslike(obj: { prototype: any }): boolean {
+    function isClasslike(obj: { prototype: unknown }): boolean {
         return !!(obj.prototype && Object.getOwnPropertyNames(obj.prototype).length > 1);
     }
 
     const keyStack: string[] = [];
-    function getTopLevelDeclarations(name: string, obj: any): dom.NamespaceMember[] {
+    function getTopLevelDeclarations(name: string, obj: unknown): dom.NamespaceMember[] {
         if (walkStack.has(obj) || keyStack.length > 4) {
             // Circular or too-deep reference
             const result = create.const(name, dom.type.any);
@@ -1452,7 +1441,7 @@ namespace ts {
                 // Get clodule/fundule members
                 const keys = getKeysOfObject(obj);
                 for (const k of keys) {
-                    getTopLevelDeclarations(k!, obj[k!]).forEach(p => {
+                    getTopLevelDeclarations(k!, (obj as any)[k!]).forEach(p => { //! use getEntriesOfObject!
                         if (primaryDecl.kind === "class") {
                             // Transform certain declarations into static members
                             switch (p.kind) {
@@ -1487,7 +1476,7 @@ namespace ts {
 
                 // If anything in here is classlike or functionlike, write it as a namespace.
                 // Otherwise, write as a 'const'
-                const keys = getKeysOfObject(obj);
+                const keys = getKeysOfObject(obj as object); // https://github.com/Microsoft/TypeScript/issues/25720#issuecomment-407237691
                 let constituentTypes = ValueTypes.None;
                 for (const k of keys) {
                     constituentTypes = constituentTypes | getValueTypes((<any> obj)[k!]);
@@ -1511,7 +1500,7 @@ namespace ts {
         }
     }
 
-    function getTypeOfValue(value: any): dom.Type {
+    function getTypeOfValue(value: unknown): dom.Type {
         for (const k in builtins) {
             if (builtins[k] && value instanceof builtins[k]!) {
                 return create.namedTypeReference(k);
@@ -1539,7 +1528,7 @@ namespace ts {
                     return dom.type.any;
                 } else {
                     walkStack.add(value);
-                    const members = getPropertyDeclarationsOfObject(value);
+                    const members = getPropertyDeclarationsOfObject(value as object); // https://github.com/Microsoft/TypeScript/issues/25720#issuecomment-407237691
                     walkStack.delete(value);
                     members.sort(declarationComparer);
                     const objType = dom.create.objectType(members);
@@ -1550,7 +1539,7 @@ namespace ts {
         }
     }
 
-    function getPropertyDeclarationsOfObject(obj: any): dom.ObjectTypeMember[] {
+    function getPropertyDeclarationsOfObject(obj: object): dom.ObjectTypeMember[] {
         walkStack.add(obj);
         const keys = getKeysOfObject(obj);
         const result = keys.map(getProperty);
@@ -1558,14 +1547,14 @@ namespace ts {
         return result;
 
         function getProperty(k: string) {
-            if (walkStack.has(obj[k])) {
+            if (walkStack.has((obj as any)[k])) { //use eachentry
                 return create.property(k, dom.type.any);
             }
-            return create.property(k, getTypeOfValue(obj[k]));
+            return create.property(k, getTypeOfValue((obj as any)[k]));
         }
     }
 
-    function getClassPrototypeMembers(ctor: any): dom.ClassMember[] {
+    function getClassPrototypeMembers(ctor: any): dom.ClassMember[] {//!
         const names = Object.getOwnPropertyNames(ctor.prototype);
         const members = <dom.ClassMember[]> names
             .filter(n => !isNameToSkip(n))
@@ -1575,7 +1564,7 @@ namespace ts {
         members.sort();
         return members;
 
-        function getPrototypeMember(name: string, obj: any): dom.ClassMember | undefined {
+        function getPrototypeMember(name: string, obj: unknown): dom.ClassMember | undefined {
             // Skip non-function objects on the prototype (not sure what to do with these?)
             if (typeof obj !== 'function') {
                 return undefined;
@@ -1595,13 +1584,15 @@ namespace ts {
     }
 
     // Parses assignments to 'this.x' in the constructor into class property declarations
-    function getClassInstanceMembers(ctor: any): dom.ClassMember[] {
-        if (isNativeFunction(ctor)) {
+    function getClassInstanceMembers(ctor: unknown): dom.ClassMember[] {
+        if (isNativeFunction(ctor as any)) { //!
             return [];
         }
 
         const members: dom.ClassMember[] = [];
 
+        //todo: seems like this ought to be used
+        visit;
         function visit(node: ts.Node) {
             switch (node.kind) {
                 case ts.SyntaxKind.BinaryExpression:
@@ -1625,7 +1616,7 @@ namespace ts {
         return members;
     }
 
-    function declarationComparer(left: any, right: any) {
+    function declarationComparer(left: any, right: any) { //TODO: this is just wrong. Acts on Nodes, but receives dom.ClassMembers
         if (left.kind === right.kind) {
             return left.name > right.name ? 1 : left.name < right.name ? -1 : 0;
         } else {
@@ -1690,7 +1681,7 @@ namespace ts {
         return dom.type.any;
     }
 
-    function parseFunctionBody(fn: any): ts.FunctionExpression {
+    function parseFunctionBody(fn: Function): ts.FunctionExpression {
         const setup = `const myFn = ${fn.toString()};`;
         const srcFile = ts.createSourceFile('test.ts', setup, ts.ScriptTarget.Latest, true);
         const statement = srcFile.statements[0] as ts.VariableStatement;
@@ -1699,7 +1690,7 @@ namespace ts {
         return init;
     }
 
-    function isNativeFunction(fn: any) {
+    function isNativeFunction(fn: Function) {
         return fn.toString().indexOf('{ [native code] }') > 0;
     }
 }

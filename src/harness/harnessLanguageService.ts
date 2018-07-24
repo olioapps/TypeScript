@@ -202,6 +202,9 @@ namespace Harness.LanguageService {
         }
 
         installPackage = ts.notImplemented;
+        tryRequire(fileName: string): unknown {
+            return ts.tryRequireFromString(this.readFile(fileName), fileName);
+        }
 
         getCompilationSettings() { return this.settings; }
 

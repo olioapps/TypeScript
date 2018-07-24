@@ -18,7 +18,7 @@ namespace ts.codefix {
             if (packageName === undefined) return undefined;
             const typesPackageName = getTypesPackageNameToInstall(packageName, host, context.errorCode);
             return typesPackageName === undefined
-                ? singleElementArray(tryGenerateTypes(packageName, sourceFile.fileName, context.host))
+                ? singleElementArray(tryGenerateTypes(context, packageName, sourceFile.fileName))
                 : [createCodeFixAction(fixName, /*changes*/ [], [Diagnostics.Install_0, typesPackageName], fixIdInstallTypesPackage, Diagnostics.Install_all_missing_types_packages, getCommand(sourceFile.fileName, typesPackageName))];
         },
         fixIds: [fixIdInstallTypesPackage],
@@ -31,23 +31,74 @@ namespace ts.codefix {
         }),
     });
 
-    function tryGenerateTypes(packageName: string, importingFileName: string, host: LanguageServiceHost): CodeFixAction | undefined {
-        const changes = doTryGenerateTypes(packageName, importingFileName, host);
+    function tryGenerateTypes(context: CodeFixContextBase, packageName: string, importingFileName: string): CodeFixAction | undefined {
+        const changes = doTryGenerateTypes(context, packageName, importingFileName);
         return changes && createCodeFixActionNoFixId(fixName, changes, [Diagnostics.Generate_types_for_0, packageName]);//, fixIdGenerateTypes)
     }
 
-    function doTryGenerateTypes(packageName: string, importingFileName: string, host: LanguageServiceHost): FileTextChanges[] | undefined {
-        const generatedDtsFile = doDoTryGenerateTypes(packageName, importingFileName, host);
-        return generatedDtsFile ? [textChanges.newFileTextChange(outName, generatedDtsFile)] : undefined;
+    function doTryGenerateTypes(context: CodeFixContextBase, packageName: string, importingFileName: string): FileTextChanges[] | undefined {
+        const { configFile } = context.program.getCompilerOptions();
+        if (!configFile) return undefined;
+
+        const generatedDtsFile = doDoTryGenerateTypes(packageName, importingFileName, context.host);
+        if (!generatedDtsFile) return undefined;
+
+        return textChanges.ChangeTracker.with(context, t => {
+            const typesDir = getTypesDirectory(configFile, t);
+            t.createNewFile2(combinePaths(typesDir, packageName + ".d.ts"), generatedDtsFile); //neater
+        });
     }
 
-    function foo() {
-        need to update tsconfig
+    //TODO: need to update tsconfig to include the new files
+    //returns undefined
+    function getTypesDirectory(tsconfig: TsConfigSourceFile, changes: textChanges.ChangeTracker) {
+        const defaultName = "types";
+
+        const tsconfigObjectLiteral = getTsConfigObjectLiteralExpression(tsconfig);
+        if (!tsconfigObjectLiteral) {
+            return defaultName;
+        }
+
+        const newTypeRootsProperty = createPropertyAssignment(createStringLiteral("typeRoots"), createArrayLiteral([createStringLiteral("node_modules"), createStringLiteral(defaultName)]));
+
+        const compilerOptionsProperty = findProperty(tsconfigObjectLiteral, "compilerOptions");
+        if (!compilerOptionsProperty) {
+            //test
+            changes.insertNodeAtObjectStart(tsconfig, tsconfigObjectLiteral, createPropertyAssignment(createStringLiteral("compilerOptions"), createObjectLiteral([newTypeRootsProperty])));
+            return defaultName;
+        }
+
+        const compilerOptions = compilerOptionsProperty.initializer;
+        if (!isObjectLiteralExpression(compilerOptions)) return defaultName;
+
+        const typeRoots = findProperty(compilerOptions, "typeRoots");
+        if (!typeRoots) {
+            changes.insertNodeAtObjectStart(tsconfig, compilerOptions, newTypeRootsProperty);
+            return defaultName;
+        }
+
+        const typeRootsArray = typeRoots.initializer;
+        if (!isArrayLiteralExpression(typeRootsArray) || typeRootsArray.elements.length === 0) return defaultName;
+        //If there's a non-`node_modules` entry there, put types there.
+        //todo: path normalization
+        const p = find(typeRootsArray.elements, (r): r is StringLiteral => isStringLiteral(r) && r.text !== "node_modules");
+        if (p) {
+            return p.text;
+        }
+        else {
+            changes.insertNodeAfter(tsconfig, last(typeRootsArray.elements), createStringLiteral(defaultName));
+            return defaultName;
+        }
+    }
+
+    function findProperty(o: ObjectLiteralExpression, name: string): PropertyAssignment | undefined {
+        return find(o.properties, (p): p is PropertyAssignment => isPropertyAssignment(p) && !!p.name && isStringLiteral(p.name) && p.name.text === name)
     }
 
     function doDoTryGenerateTypes(packageName: string, importingFileName: string, host: LanguageServiceHost): string | undefined {
         const resolved = tryResolveJavaScriptModule(packageName, getDirectoryPath(importingFileName), host as ModuleResolutionHost); // TODO: GH#18217
-        return resolved && generateTypesForModule(packageName, resolved);
+        const x = resolved === undefined ? undefined : host.tryRequire && host.tryRequire(resolved);
+        return x === undefined ? undefined : generateTypesForModule(packageName, x);
     }
 
     function getCommand(fileName: string, packageName: string): InstallPackageAction {
