@@ -1965,18 +1965,11 @@ Actual: ${stringify(fullActual)}`);
          * May be negative.
          */
         private applyEdits(fileName: string, edits: ReadonlyArray<ts.TextChange>, isFormattingEdit: boolean): number {
-            // We get back a set of edits, but langSvc.editScript only accepts one at a time. Use this to keep track
-            // of the incremental offset from each edit to the next. We assume these edit ranges don't overlap
-
-            // Copy this so we don't ruin someone else's copy
-            edits = JSON.parse(JSON.stringify(edits));
-
             // Get a snapshot of the content of the file so we can make sure any formatting edits didn't destroy non-whitespace characters
             const oldContent = this.getFileContent(fileName);
             let runningOffset = 0;
 
-            for (let i = 0; i < edits.length; i++) {
-                const edit = edits[i];
+            TestState.forEachTextChange(edits, edit => {
                 const offsetStart = edit.span.start;
                 const offsetEnd = offsetStart + edit.span.length;
                 this.editScriptAndUpdateMarkers(fileName, offsetStart, offsetEnd, edit.newText);
@@ -1992,14 +1985,7 @@ Actual: ${stringify(fullActual)}`);
                     }
                 }
                 runningOffset += editDelta;
-
-                // Update positions of any future edits affected by this change
-                for (let j = i + 1; j < edits.length; j++) {
-                    if (edits[j].span.start >= edits[i].span.start) {
-                        edits[j].span.start += editDelta;
-                    }
-                }
-            }
+            });
 
             if (isFormattingEdit) {
                 const newContent = this.getFileContent(fileName);
@@ -2010,6 +1996,28 @@ Actual: ${stringify(fullActual)}`);
             }
 
             return runningOffset;
+        }
+
+        //!
+        private static forEachTextChange(changes: ReadonlyArray<ts.TextChange>, cb: (change: ts.TextChange) => void): void {
+            // We get back a set of edits, but langSvc.editScript only accepts one at a time. Use this to keep track
+            // of the incremental offset from each edit to the next. We assume these edit ranges don't overlap
+
+            // Copy this so we don't ruin someone else's copy
+            changes = JSON.parse(JSON.stringify(changes));
+
+            for (let i = 0; i < changes.length; i++) {
+                const change = changes[i];
+                cb(change);
+                const editDelta = change.newText.length - change.span.length;
+                // Update positions of any future edits affected by this change
+                for (let j = i + 1; j < changes.length; j++) {
+                    const { span } = changes[j];
+                    if (span.start >= changes[i].span.start) {
+                        span.start += editDelta;
+                    }
+                }
+            }
         }
 
         public copyFormatOptions(): ts.FormatCodeSettings {
@@ -2037,6 +2045,17 @@ Actual: ${stringify(fullActual)}`);
             this.applyEdits(this.activeFile.fileName, edits, /*isFormattingEdit*/ true);
         }
 
+        private updateMarkers2({ pos, end }: ts.TextRange, textChanges: ReadonlyArray<ts.TextChange>): ts.TextRange {
+            TestState.forEachTextChange(textChanges, change => {
+                pos = updatePosition(pos, change);
+                end = updatePosition(end, change);
+            });
+            return { pos, end };
+            function updatePosition(position: number, change: ts.TextChange): number {
+                return TestState.updatePosition(position, change.span.start, ts.textSpanEnd(change.span), change.newText);
+            }
+        }
+
         //!!!
         private editScriptAndUpdateMarkers(fileName: string, editStart: number, editEnd: number, newText: string) {
             this.languageServiceAdapterHost.editScript(fileName, editStart, editEnd, newText);
@@ -2054,15 +2073,6 @@ Actual: ${stringify(fullActual)}`);
             }
         }
 
-        private updateMarkers2({ pos, end }: ts.TextRange, textChanges: ReadonlyArray<ts.TextChange>): ts.TextRange {
-            return { pos: updatePosition(pos), end: updatePosition(end) };
-            function updatePosition(position: number): number {
-                for (const change of textChanges) {
-                    position = TestState.updatePosition(position, change.span.start, ts.textSpanEnd(change.span), change.newText);
-                }
-                return position;
-            }
-        }
 
         //!
         private static updatePosition(position: number, editStart: number, editEnd: number, newText: string): number {
@@ -2514,23 +2524,24 @@ Actual: ${stringify(fullActual)}`);
         }
 
         public verifyRangeIs(expectedText: string, includeWhiteSpace?: boolean) {
+            this.verifyTextMatches(this.rangeText(this.getOnlyRange()), !!includeWhiteSpace, expectedText);
+        }
+
+        //!
+        private getOnlyRange() {
             const ranges = this.getRanges();
             if (ranges.length !== 1) {
                 this.raiseError("Exactly one range should be specified in the testfile.");
             }
-            this.foo(this.rangeText(ranges[0]), !!includeWhiteSpace, expectedText);
+            return ts.first(ranges);
         }
 
         //name
-        private foo(actualText: string, includeWhitespace: boolean, expectedText: string) {
-            const result = includeWhitespace
-                ? actualText === expectedText
-                : this.removeWhitespace(actualText) === this.removeWhitespace(expectedText);
-
-            if (!result) {
+        private verifyTextMatches(actualText: string, includeWhitespace: boolean, expectedText: string) {
+            const removeWhitespace = (s: string): string => includeWhitespace ? s : this.removeWhitespace(s);
+            if (removeWhitespace(actualText) !== removeWhitespace(expectedText)) {
                 this.raiseError(`Actual range text doesn't match expected text.\n${showTextDiff(expectedText, actualText)}`);
             }
-
         }
 
         /**
@@ -2613,16 +2624,12 @@ Actual: ${stringify(fullActual)}`);
                 assert(changes.length === 1, "Affected 0 or more than 1 file, must use 'newFileContent' instead of 'newRangeContent'");
                 const change = ts.first(changes);
                 assert(change.fileName = this.activeFile.fileName);
-                const newText = ts.textChanges.applyChanges(this.activeFile.content, change.textChanges);
+                const newText = ts.textChanges.applyChanges(this.getFileContent(this.activeFile.fileName), change.textChanges);
                 //also need to update the range...
 
-                const ranges = this.getRanges();
-                if (ranges.length !== 1) throw "todo"; //!
-                const oldRange = ts.first(ranges);
-                const newRange = this.updateMarkers2(oldRange, change.textChanges);
-
+                const newRange = this.updateMarkers2(this.getOnlyRange(), change.textChanges);
                 const actualText = newText.slice(newRange.pos, newRange.end);
-                this.foo(actualText, /*includeWhitespace*/ true, newRangeContent);
+                this.verifyTextMatches(actualText, /*includeWhitespace*/ true, newRangeContent);
             }
             else {
                 if (newFileContent === undefined) throw ts.Debug.fail();

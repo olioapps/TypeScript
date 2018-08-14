@@ -21,7 +21,7 @@ test.setTypesRegistry({
 goTo.marker();
 
 verify.codeFixAll({
-    fixId: "fixCannotFindModule",
+    fixId: "installTypesPackage",
     fixAllDescription: "Install all missing types packages",
     commands: [
         { packageName: "@types/abs", file: "/a.ts", type: "install package" },
