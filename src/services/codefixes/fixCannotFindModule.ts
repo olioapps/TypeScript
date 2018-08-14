@@ -44,14 +44,13 @@ namespace ts.codefix {
         if (!generatedDtsFile) return undefined;
 
         return textChanges.ChangeTracker.with(context, t => {
-            const typesDir = getTypesDirectory(configFile, t);
+            const typesDir = getOrCreateTypesDirectory(configFile, t);
             t.createNewFile2(combinePaths(typesDir, packageName + ".d.ts"), generatedDtsFile); //neater
         });
     }
 
-    //TODO: need to update tsconfig to include the new files
-    //returns undefined
-    function getTypesDirectory(tsconfig: TsConfigSourceFile, changes: textChanges.ChangeTracker) {
+    //If no types directory exists yet, adds it to tsconfig.json
+    function getOrCreateTypesDirectory(tsconfig: TsConfigSourceFile, changes: textChanges.ChangeTracker): string {
         const defaultName = "types";
 
         const tsconfigObjectLiteral = getTsConfigObjectLiteralExpression(tsconfig);
@@ -81,9 +80,9 @@ namespace ts.codefix {
         if (!isArrayLiteralExpression(typeRootsArray) || typeRootsArray.elements.length === 0) return defaultName;
         //If there's a non-`node_modules` entry there, put types there.
         //todo: path normalization
-        const p = find(typeRootsArray.elements, (r): r is StringLiteral => isStringLiteral(r) && r.text !== "node_modules");
-        if (p) {
-            return p.text;
+        const firstTypesDirectory = find(typeRootsArray.elements, (r): r is StringLiteral => isStringLiteral(r) && r.text !== "node_modules");
+        if (firstTypesDirectory) {
+            return firstTypesDirectory.text;
         }
         else {
             changes.insertNodeAfter(tsconfig, last(typeRootsArray.elements), createStringLiteral(defaultName));

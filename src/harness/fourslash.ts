@@ -50,10 +50,8 @@ namespace FourSlash {
         data?: {};
     }
 
-    export interface Range {
+    export interface Range extends ts.TextRange {
         fileName: string;
-        pos: number;
-        end: number;
         marker?: Marker;
     }
 
@@ -1103,7 +1101,7 @@ namespace FourSlash {
             return node;
         }
 
-        private verifyRange(desc: string, expected: Range, actual: ts.Node) {
+        private verifyRange(desc: string, expected: ts.TextRange, actual: ts.Node) {
             const actualStart = actual.getStart();
             const actualEnd = actual.getEnd();
             if (actualStart !== expected.pos || actualEnd !== expected.end) {
@@ -2039,35 +2037,47 @@ Actual: ${stringify(fullActual)}`);
             this.applyEdits(this.activeFile.fileName, edits, /*isFormattingEdit*/ true);
         }
 
+        //!!!
         private editScriptAndUpdateMarkers(fileName: string, editStart: number, editEnd: number, newText: string) {
             this.languageServiceAdapterHost.editScript(fileName, editStart, editEnd, newText);
             for (const marker of this.testData.markers) {
                 if (marker.fileName === fileName) {
-                    marker.position = updatePosition(marker.position);
+                    marker.position = TestState.updatePosition(marker.position, editStart, editEnd, newText);
                 }
             }
 
             for (const range of this.testData.ranges) {
                 if (range.fileName === fileName) {
-                    range.pos = updatePosition(range.pos);
-                    range.end = updatePosition(range.end);
+                    range.pos = TestState.updatePosition(range.pos, editStart, editEnd, newText);
+                    range.end = TestState.updatePosition(range.end, editStart, editEnd, newText);
                 }
             }
+        }
 
-            function updatePosition(position: number) {
-                if (position > editStart) {
-                    if (position < editEnd) {
-                        // Inside the edit - mark it as invalidated (?)
-                        return -1;
-                    }
-                    else {
-                        // Move marker back/forward by the appropriate amount
-                        return position + (editStart - editEnd) + newText.length;
-                    }
+        private updateMarkers2({ pos, end }: ts.TextRange, textChanges: ReadonlyArray<ts.TextChange>): ts.TextRange {
+            return { pos: updatePosition(pos), end: updatePosition(end) };
+            function updatePosition(position: number): number {
+                for (const change of textChanges) {
+                    position = TestState.updatePosition(position, change.span.start, ts.textSpanEnd(change.span), change.newText);
+                }
+                return position;
+            }
+        }
+
+        //!
+        private static updatePosition(position: number, editStart: number, editEnd: number, newText: string): number {
+            if (position > editStart) {
+                if (position < editEnd) {
+                    // Inside the edit - mark it as invalidated (?)
+                    return -1;
                 }
                 else {
-                    return position;
+                    // Move marker back/forward by the appropriate amount
+                    return position + (editStart - editEnd) + newText.length;
                 }
+            }
+            else {
+                return position;
             }
         }
 
@@ -2508,16 +2518,19 @@ Actual: ${stringify(fullActual)}`);
             if (ranges.length !== 1) {
                 this.raiseError("Exactly one range should be specified in the testfile.");
             }
+            this.foo(this.rangeText(ranges[0]), !!includeWhiteSpace, expectedText);
+        }
 
-            const actualText = this.rangeText(ranges[0]);
-
-            const result = includeWhiteSpace
+        //name
+        private foo(actualText: string, includeWhitespace: boolean, expectedText: string) {
+            const result = includeWhitespace
                 ? actualText === expectedText
                 : this.removeWhitespace(actualText) === this.removeWhitespace(expectedText);
 
             if (!result) {
                 this.raiseError(`Actual range text doesn't match expected text.\n${showTextDiff(expectedText, actualText)}`);
             }
+
         }
 
         /**
@@ -2583,32 +2596,79 @@ Actual: ${stringify(fullActual)}`);
 
             assert.equal(action.description, options.description);
 
-            for (const change of action.changes) {
-                this.applyEdits(change.fileName, change.textChanges, /*isFormattingEdit*/ false);
+            if (options.applyChanges) {
+                for (const change of action.changes) {
+                    this.applyEdits(change.fileName, change.textChanges, /*isFormattingEdit*/ false);
+                }
+                this.verifyNewContent(options, action.changes.map(c => c.fileName));
             }
-
-            this.verifyNewContent(options, action.changes.map(c => c.fileName));
+            else {
+                this.verifyNewContentImmutable(options, action.changes);
+            }
         }
 
-        private verifyNewContent(options: FourSlashInterface.NewContentOptions, changedFiles: ReadonlyArray<string>) {
-            const assertedChangedFiles = !options.newFileContent || typeof options.newFileContent === "string"
+        private verifyNewContentImmutable({ newFileContent, newRangeContent }: FourSlashInterface.NewContentOptions, changes: ReadonlyArray<ts.FileTextChanges>): void {
+            if (newRangeContent !== undefined) {
+                assert(newFileContent === undefined);
+                assert(changes.length === 1, "Affected 0 or more than 1 file, must use 'newFileContent' instead of 'newRangeContent'");
+                const change = ts.first(changes);
+                assert(change.fileName = this.activeFile.fileName);
+                const newText = ts.textChanges.applyChanges(this.activeFile.content, change.textChanges);
+                //also need to update the range...
+
+                const ranges = this.getRanges();
+                if (ranges.length !== 1) throw "todo"; //!
+                const oldRange = ts.first(ranges);
+                const newRange = this.updateMarkers2(oldRange, change.textChanges);
+
+                const actualText = newText.slice(newRange.pos, newRange.end);
+                this.foo(actualText, /*includeWhitespace*/ true, newRangeContent);
+            }
+            else {
+                if (newFileContent === undefined) throw ts.Debug.fail();
+
+                if (typeof newFileContent !== "object") newFileContent = { [this.activeFile.fileName]: newFileContent };
+
+                for (const change of changes) {
+                    const expectedNewContent = newFileContent[change.fileName];
+
+                    if (expectedNewContent === undefined) {
+                        ts.Debug.fail(`Did not expect a change in ${change.fileName}`);
+                    }
+
+                    const oldText = this.tryGetFileContent(change.fileName);
+                    ts.Debug.assert(!!change.isNewFile === (oldText === undefined));
+                    const newContent = change.isNewFile ? ts.first(change.textChanges).newText : ts.textChanges.applyChanges(oldText!, change.textChanges);
+
+                    assert.equal(newContent, expectedNewContent);
+                }
+
+                for (const newFileName in newFileContent) {
+                    ts.Debug.assert(changes.some(c => c.fileName === newFileName), "No change in file", () => newFileName);
+                }
+            }
+
+        }
+
+        private verifyNewContent({ newFileContent, newRangeContent }: FourSlashInterface.NewContentOptions, changedFiles: ReadonlyArray<string>) {
+            const assertedChangedFiles = !newFileContent || typeof newFileContent === "string"
                 ? [this.activeFile.fileName]
-                : ts.getOwnKeys(options.newFileContent);
+                : ts.getOwnKeys(newFileContent);
             assert.deepEqual(assertedChangedFiles, changedFiles);
 
-            if (options.newFileContent !== undefined) {
-                assert(!options.newRangeContent);
-                if (typeof options.newFileContent === "string") {
-                    this.verifyCurrentFileContent(options.newFileContent);
+            if (newFileContent !== undefined) {
+                assert(!newRangeContent);
+                if (typeof newFileContent === "string") {
+                    this.verifyCurrentFileContent(newFileContent);
                 }
                 else {
-                    for (const fileName in options.newFileContent) {
-                        this.verifyFileContent(fileName, options.newFileContent[fileName]);
+                    for (const fileName in newFileContent) {
+                        this.verifyFileContent(fileName, newFileContent[fileName]);
                     }
                 }
             }
             else {
-                this.verifyRangeIs(options.newRangeContent!, /*includeWhitespace*/ true);
+                this.verifyRangeIs(newRangeContent!, /*includeWhitespace*/ true);
             }
         }
 
@@ -4858,6 +4918,7 @@ namespace FourSlashInterface {
         errorCode?: number;
         index?: number;
         preferences?: ts.UserPreferences;
+        applyChanges?: boolean;
     }
 
     export interface VerifyCodeFixAvailableOptions {

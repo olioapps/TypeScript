@@ -14,8 +14,6 @@
 ////    }
 ////}
 
-TODO: in applyEdits in fourslash.ts it assumes we only update old files
-
 goTo.file("/a.ts");
 verify.codeFix({
     description: "Generate types for 'plus'",

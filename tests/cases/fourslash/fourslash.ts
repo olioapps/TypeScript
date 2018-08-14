@@ -183,6 +183,7 @@ declare namespace FourSlashInterface {
             errorCode?: number,
             index?: number,
             preferences?: UserPreferences,
+            applyChanges?: boolean,
         });
         codeFixAvailable(options?: ReadonlyArray<VerifyCodeFixAvailableOptions>): void;
         applicableRefactorAvailableAtMarker(markerName: string): void;
