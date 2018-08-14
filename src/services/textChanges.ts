@@ -213,8 +213,10 @@ namespace ts.textChanges {
         private readonly changes: Change[] = [];
         private readonly newFiles: { readonly oldFile: SourceFile, readonly fileName: string, readonly statements: ReadonlyArray<Statement> }[] = [];
         private readonly newFiles2: { readonly fileName: string, readonly text: string }[] = [];
-        private readonly classesWithNodesInsertedAtStart = createMap<ClassDeclaration>(); // Set<ClassDeclaration> implemented as Map<node id, ClassDeclaration>
+        private readonly classesWithNodesInsertedAtStart = createMap<{ readonly node: ClassDeclaration | InterfaceDeclaration | ObjectLiteralExpression, readonly sourceFile: SourceFile }>(); // Set<ClassDeclaration> implemented as Map<node id, ClassDeclaration>
         private readonly deletedNodes: { readonly sourceFile: SourceFile, readonly node: Node | NodeArray<TypeParameterDeclaration> }[] = [];
+
+        public static fromContext(context: TextChangesContext): ChangeTracker {
             return new ChangeTracker(getNewLineOrDefaultFromHost(context.host, context.formatContext.options), context.formatContext);
         }
 
@@ -408,34 +410,24 @@ namespace ts.textChanges {
             });
         }
 
-<<<<<<< 0aa1f52e43b17b016159735a12dac8f9bb86509a
-        public insertNodeAtClassStart(sourceFile: SourceFile, cls: ClassLikeDeclaration | InterfaceDeclaration, newElement: ClassElement): void {
-=======
         //name cls
-        public insertNodeAtClassStart(sourceFile: SourceFile, cls: ClassLikeDeclaration, newElement: ClassElement): void {
+        public insertNodeAtClassStart(sourceFile: SourceFile, cls: ClassLikeDeclaration | InterfaceDeclaration, newElement: ClassElement): void {
             this.insertNodeAtStartWorker(sourceFile, cls, newElement);
         }
         public insertNodeAtObjectStart(sourceFile: SourceFile, cls: ObjectLiteralExpression, newElement: ObjectLiteralElementLike): void {//name cls
             this.insertNodeAtStartWorker(sourceFile, cls, newElement);
         }
 
-        private insertNodeAtStartWorker(sourceFile: SourceFile, cls: ClassLikeDeclaration | ObjectLiteralExpression, newElement: ClassElement | ObjectLiteralElementLike): void {
->>>>>>> wip
+        private insertNodeAtStartWorker(sourceFile: SourceFile, cls: ClassLikeDeclaration | InterfaceDeclaration | ObjectLiteralExpression, newElement: ClassElement | ObjectLiteralElementLike): void {
             const clsStart = cls.getStart(sourceFile);
             const indentation = formatting.SmartIndenter.findFirstNonWhitespaceColumn(getLineStartPositionForPosition(clsStart, sourceFile), clsStart, sourceFile, this.formatContext.options)
                 + this.formatContext.options.indentSize!;
             this.insertNodeAt(sourceFile, getMembersOrProperties(cls).pos, newElement, { indentation, ...this.getInsertNodeAtStartPrefixSuffix(sourceFile, cls) });
         }
 
-<<<<<<< 0aa1f52e43b17b016159735a12dac8f9bb86509a
-        private getInsertNodeAtClassStartPrefixSuffix(sourceFile: SourceFile, cls: ClassLikeDeclaration | InterfaceDeclaration): { prefix: string, suffix: string } {
-            if (cls.members.length === 0) {
-                if (addToSeen(this.classesWithNodesInsertedAtStart, getNodeId(cls), cls)) {
-=======
-        private getInsertNodeAtStartPrefixSuffix(sourceFile: SourceFile, cls: ClassLikeDeclaration | ObjectLiteralExpression): { prefix: string, suffix: string } {
+        private getInsertNodeAtStartPrefixSuffix(sourceFile: SourceFile, cls: ClassLikeDeclaration | InterfaceDeclaration | ObjectLiteralExpression): { prefix: string, suffix: string } {
             if (getMembersOrProperties(cls).length === 0) {
                 if (addToSeen(this.classesWithNodesInsertedAtStart, getNodeId(cls), { node: cls, sourceFile })) {
->>>>>>> wip
                     // For `class C {\n}`, don't add the trailing "\n"
                     const shouldSuffix = (positionsAreOnSameLine as any)(...getClassBraceEnds(cls, sourceFile), sourceFile); // TODO: GH#4130 remove 'as any'
                     return { prefix: this.newLineCharacter, suffix: shouldSuffix ? this.newLineCharacter : "" };
@@ -733,15 +725,11 @@ namespace ts.textChanges {
         return skipTrivia(sourceFile.text, getAdjustedStartPosition(sourceFile, node, {}, Position.FullStart), /*stopAfterLineBreak*/ false, /*stopAtComments*/ true);
     }
 
-<<<<<<< 0aa1f52e43b17b016159735a12dac8f9bb86509a
-    function getClassBraceEnds(cls: ClassLikeDeclaration | InterfaceDeclaration, sourceFile: SourceFile): [number, number] {
-=======
-    function getClassBraceEnds(cls: ClassLikeDeclaration | ObjectLiteralExpression, sourceFile: SourceFile): [number, number] { //name
->>>>>>> wip
+    function getClassBraceEnds(cls: ClassLikeDeclaration | InterfaceDeclaration | ObjectLiteralExpression, sourceFile: SourceFile): [number, number] { //name
         return [findChildOfKind(cls, SyntaxKind.OpenBraceToken, sourceFile)!.end, findChildOfKind(cls, SyntaxKind.CloseBraceToken, sourceFile)!.end];
     }
     //!
-    function getMembersOrProperties(cls: ClassLikeDeclaration | ObjectLiteralExpression): NodeArray<Node> { //name
+    function getMembersOrProperties(cls: ClassLikeDeclaration | InterfaceDeclaration | ObjectLiteralExpression): NodeArray<Node> { //name
         return isObjectLiteralExpression(cls) ? cls.properties : cls.members;
     }
 
