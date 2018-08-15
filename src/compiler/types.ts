@@ -844,6 +844,7 @@ namespace ts {
         questionToken?: QuestionToken;      // Present on optional property
         type?: TypeNode;                    // Optional type annotation
         initializer?: Expression;           // Optional initializer
+        //why would a propertysignature have an initializer?
     }
 
     export interface PropertyDeclaration extends ClassElement, JSDocContainer {
@@ -2062,6 +2063,9 @@ namespace ts {
     }
 
     export type ClassLikeDeclaration = ClassDeclaration | ClassExpression;
+
+    //!
+    export type ClassElementLike = | PropertyDeclaration | MethodDeclaration | ConstructorDeclaration | SemicolonClassElement | AccessorDeclaration | IndexSignatureDeclaration;
 
     export interface ClassElement extends NamedDeclaration {
         _classElementBrand: any;

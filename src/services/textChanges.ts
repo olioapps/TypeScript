@@ -211,8 +211,7 @@ namespace ts.textChanges {
 
     export class ChangeTracker {
         private readonly changes: Change[] = [];
-        private readonly newFiles: { readonly oldFile: SourceFile, readonly fileName: string, readonly statements: ReadonlyArray<Statement> }[] = [];
-        private readonly newFiles2: { readonly fileName: string, readonly text: string }[] = [];
+        private readonly newFiles: { readonly oldFile: SourceFile | undefined, readonly fileName: string, readonly statements: ReadonlyArray<Statement> }[] = [];
         private readonly classesWithNodesInsertedAtStart = createMap<{ readonly node: ClassDeclaration | InterfaceDeclaration | ObjectLiteralExpression, readonly sourceFile: SourceFile }>(); // Set<ClassDeclaration> implemented as Map<node id, ClassDeclaration>
         private readonly deletedNodes: { readonly sourceFile: SourceFile, readonly node: Node | NodeArray<TypeParameterDeclaration> }[] = [];
 
@@ -703,20 +702,11 @@ namespace ts.textChanges {
             for (const { oldFile, fileName, statements } of this.newFiles) {
                 changes.push(changesToText.newFileChanges(oldFile, fileName, statements, this.newLineCharacter, this.formatContext));
             }
-            for (const { fileName, text } of this.newFiles2) {
-                changes.push(newFileTextChange(fileName, text));
-            }
             return changes;
         }
 
-        //todo: allow oldFile to be undefined
-        public createNewFile(oldFile: SourceFile, fileName: string, statements: ReadonlyArray<Statement>) {
+        public createNewFile(oldFile: SourceFile | undefined, fileName: string, statements: ReadonlyArray<Statement>) {
             this.newFiles.push({ oldFile, fileName, statements });
-        }
-
-        //kill
-        public createNewFile2(fileName: string, text: string) {
-            this.newFiles2.push({ fileName, text });
         }
     }
 
@@ -735,7 +725,7 @@ namespace ts.textChanges {
 
     export type ValidateNonFormattedText = (node: Node, text: string) => void;
 
-    //!
+    //! why exported?
     export function newFileTextChange(fileName: string, text: string) {
         return { fileName, textChanges: [createTextChange(createTextSpan(0, 0), text)], isNewFile: true };
     }
@@ -758,7 +748,7 @@ namespace ts.textChanges {
             });
         }
 
-        export function newFileChanges(oldFile: SourceFile, fileName: string, statements: ReadonlyArray<Statement>, newLineCharacter: string, formatContext: formatting.FormatContext): FileTextChanges {
+        export function newFileChanges(oldFile: SourceFile | undefined, fileName: string, statements: ReadonlyArray<Statement>, newLineCharacter: string, formatContext: formatting.FormatContext): FileTextChanges {
             // TODO: this emits the file, parses it back, then formats it that -- may be a less roundabout way to do this
             const nonFormattedText = statements.map(s => getNonformattedText(s, oldFile, newLineCharacter).text).join(newLineCharacter);
             const sourceFile = createSourceFile(fileName, nonFormattedText, ScriptTarget.ESNext, /*setParentNodes*/ true);

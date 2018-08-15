@@ -25,11 +25,6 @@ verify.codeFix({
 }`,
         "types/plus.d.ts":
 `export = plus;
-
-declare function plus(x: any, y: any): any;
-
-`,
+declare function plus(x: any, y: any): any;`,
     },
 });
-
-TODO: fails because of \r inserted by dtsgen. Make it use textChanges!!!

@@ -45,7 +45,7 @@ namespace ts.codefix {
 
         return textChanges.ChangeTracker.with(context, t => {
             const typesDir = getOrCreateTypesDirectory(configFile, t);
-            t.createNewFile2(combinePaths(typesDir, packageName + ".d.ts"), generatedDtsFile); //neater
+            t.createNewFile(/*oldFile*/ undefined, combinePaths(typesDir, packageName + ".d.ts"), generatedDtsFile); //neater
         });
     }
 
@@ -94,7 +94,7 @@ namespace ts.codefix {
         return find(o.properties, (p): p is PropertyAssignment => isPropertyAssignment(p) && !!p.name && isStringLiteral(p.name) && p.name.text === name)
     }
 
-    function doDoTryGenerateTypes(packageName: string, importingFileName: string, host: LanguageServiceHost): string | undefined {
+    function doDoTryGenerateTypes(packageName: string, importingFileName: string, host: LanguageServiceHost): ReadonlyArray<Statement> | undefined {
         const resolved = tryResolveJavaScriptModule(packageName, getDirectoryPath(importingFileName), host as ModuleResolutionHost); // TODO: GH#18217
         const x = resolved === undefined ? undefined : host.tryRequire && host.tryRequire(resolved);
         return x === undefined ? undefined : generateTypesForModule(packageName, x);
