@@ -329,29 +329,8 @@ namespace FourSlash {
                 });
             }
 
-            this.formatCodeSettings = {
-                baseIndentSize: 0,
-                indentSize: 4,
-                tabSize: 4,
-                newLineCharacter: "\n",
-                convertTabsToSpaces: true,
-                indentStyle: ts.IndentStyle.Smart,
-                insertSpaceAfterCommaDelimiter: true,
-                insertSpaceAfterSemicolonInForStatements: true,
-                insertSpaceBeforeAndAfterBinaryOperators: true,
-                insertSpaceAfterConstructor: false,
-                insertSpaceAfterKeywordsInControlFlowStatements: true,
-                insertSpaceAfterFunctionKeywordForAnonymousFunctions: false,
-                insertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis: false,
-                insertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets: false,
-                insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces: true,
-                insertSpaceAfterOpeningAndBeforeClosingTemplateStringBraces: false,
-                insertSpaceAfterOpeningAndBeforeClosingJsxExpressionBraces: false,
-                insertSpaceAfterTypeAssertion: false,
-                placeOpenBraceOnNewLineForFunctions: false,
-                placeOpenBraceOnNewLineForControlBlocks: false,
-                insertSpaceBeforeTypeAnnotation: false
-            };
+            //!
+            this.formatCodeSettings = ts.testFormatSettings;
 
             // Open the first file by default
             this.openFile(0);
@@ -3459,11 +3438,9 @@ Actual: ${stringify(fullActual)}`);
         }
 
         public generateTypes(examples: ReadonlyArray<FourSlashInterface.GenerateTypesOptions>): void {
-            const formatContext = ts.formatting.getFormatContext(this.formatCodeSettings);
-            for (const { name = "example", source, output } of examples) {
-                const moduleValue = ts.tryRequireFromString(source, name);
-                const outputStatements = ts.generateTypesForModule(name, moduleValue);
-                const actual = outputStatements && ts.textChanges.getNewFileText(outputStatements, "\n", formatContext);
+            for (const { name = "example", value, output } of examples) {
+                //const moduleValue = ts.tryRequireFromString(source, name);
+                const actual = ts.generateTypesForModuleAsString(name, value);
                 if (actual !== output) {
                     assert.equal(actual, output, `generateTypes output for ${name} does not match`);
                 }
@@ -3492,7 +3469,7 @@ Actual: ${stringify(fullActual)}`);
         // Parse out the files and their metadata
         const testData = parseTestData(absoluteBasePath, content, absoluteFileName);
         const state = new TestState(absoluteBasePath, testType, testData);
-        const output = ts.transpileModule(content, { reportDiagnostics: true });
+        const output = ts.transpileModule(content, { reportDiagnostics: true, compilerOptions: { target: ts.ScriptTarget.ESNext } });
         if (output.diagnostics!.length > 0) {
             throw new Error(`Syntax error in ${absoluteBasePath}: ${output.diagnostics![0].messageText}`);
         }
@@ -4571,7 +4548,7 @@ namespace FourSlashInterface {
     //mv
     export interface GenerateTypesOptions {
         readonly name?: string;
-        readonly source: string;
+        readonly value: unknown;
         readonly output: string | undefined;
     }
 

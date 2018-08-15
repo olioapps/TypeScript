@@ -729,6 +729,31 @@ namespace ts {
         indentMultiLineObjectLiteralBeginningOnBlankLine?: boolean;
     }
 
+    /* @internal */
+    export const testFormatSettings: ts.FormatCodeSettings = {
+        baseIndentSize: 0,
+        indentSize: 4,
+        tabSize: 4,
+        newLineCharacter: "\n",
+        convertTabsToSpaces: true,
+        indentStyle: ts.IndentStyle.Smart,
+        insertSpaceAfterCommaDelimiter: true,
+        insertSpaceAfterSemicolonInForStatements: true,
+        insertSpaceBeforeAndAfterBinaryOperators: true,
+        insertSpaceAfterConstructor: false,
+        insertSpaceAfterKeywordsInControlFlowStatements: true,
+        insertSpaceAfterFunctionKeywordForAnonymousFunctions: false,
+        insertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis: false,
+        insertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets: false,
+        insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces: true,
+        insertSpaceAfterOpeningAndBeforeClosingTemplateStringBraces: false,
+        insertSpaceAfterOpeningAndBeforeClosingJsxExpressionBraces: false,
+        insertSpaceAfterTypeAssertion: false,
+        placeOpenBraceOnNewLineForFunctions: false,
+        placeOpenBraceOnNewLineForControlBlocks: false,
+        insertSpaceBeforeTypeAnnotation: false
+    };
+
     export interface DefinitionInfo extends DocumentSpan {
         kind: ScriptElementKind;
         name: string;

@@ -1,8 +1,15 @@
 /* @internal */
 namespace ts {
     export function generateTypesForModule(packageName: string, moduleValue: unknown): ReadonlyArray<Statement> | undefined {
+        //Note: packageName must not be "default" (test)
         const vi = getValueInfo(codefix.moduleSpecifierToValidIdentifier(packageName, ScriptTarget.ESNext), moduleValue); //name
         return vi && toStatements(vi, OutputKind.ExportEquals);
+    }
+
+    //exported for tests, possibly dtsgen?
+    export function generateTypesForModuleAsString(name: string, moduleValue: unknown): string | undefined {
+        const outputStatements = generateTypesForModule(name, moduleValue);
+        return outputStatements && textChanges.getNewFileText(outputStatements, "\n", formatting.getFormatContext(testFormatSettings));
     }
 
     const keyStack: string[] = []; //TODO: not global
@@ -13,13 +20,14 @@ namespace ts {
             return { kind: ValueKind.Const, name, type: create.any(), comment: `${walkStack.has(obj) ? 'Circular reference' : 'Too-deep object hierarchy'} from ${keyStack.join('.')}` }
         }
 
-        if (!ts.isIdentifierText(name, ts.ScriptTarget.ESNext)) return undefined;
+        //note this allows "default" apparently.
+        if (!ts.isIdentifierText(name, ts.ScriptTarget.ESNext)) return undefined; //only place this is done???
 
         walkStack.add(obj);
         keyStack.push(name);
         const res: ValueInfo = typeof obj === "function" ? getFunctionOrClassInfo(obj as AnyFunction, name)
-            : typeof obj === "object" ?  getObjectInfo(obj as object, name)
-            : { kind: ValueKind.Const, name, type: typeFromTypeof(obj), comment: undefined };
+            : typeof obj === "object" && !getBuiltinType(obj as object) ? getObjectInfo(obj as object, name)
+            : { kind: ValueKind.Const, name, type: getTypeOfValue(obj), comment: undefined };
         keyStack.pop();
         walkStack.delete(obj);
         return res;
@@ -44,35 +52,68 @@ namespace ts {
     }
 
     const enum OutputKind { ExportEquals, NamedExport, NamespaceMember }
-    function toNamespaceMemberStatements(v: ValueInfo): ReadonlyArray<Statement> { return toStatements(v, OutputKind.NamespaceMember); }
+    function toNamespaceMemberStatements(v: ValueInfo): ReadonlyArray<Statement> {
+        return toStatements(v, OutputKind.NamespaceMember);
+    }
     function toStatements(v: ValueInfo, kind: OutputKind): ReadonlyArray<Statement> {
-        const mod = kind === OutputKind.ExportEquals ? SyntaxKind.DeclareKeyword : kind === OutputKind.NamedExport ? SyntaxKind.ExportKeyword : undefined;
+        let mod: create.Modifiers = kind === OutputKind.ExportEquals ? SyntaxKind.DeclareKeyword : kind === OutputKind.NamedExport ? SyntaxKind.ExportKeyword : undefined;
         const exportEquals = kind === OutputKind.ExportEquals ? [create.exportEquals(v.name)] : emptyArray;
         switch (v.kind) {
             case ValueKind.Const: {
-                const { name, type, comment } = v;
+                let { name, type, comment } = v;
+                if (name === "default") {
+                    if (kind !== OutputKind.NamedExport) return emptyArray;
+                    //can't `export const default x: number;`. Can `decare const x: number; export default x;`
+                    return [
+                        create.exportDefault("_default"),
+                        create.constVar(mod, "_default", type, comment),
+                    ];
+                }
                 return [...exportEquals, create.constVar(mod, name, type, comment)];
             }
             case ValueKind.Function: {
                 const { name, parameters, returnType, namespaceMembers } = v;
-                return [...exportEquals, create.fn(mod, name, parameters, returnType), ...ns2(name, namespaceMembers, mod)];
+                let name2 = name; //!
+                if (name === "default") {
+                    if (kind !== OutputKind.NamedExport) return emptyArray;
+                    mod = [SyntaxKind.ExportKeyword, SyntaxKind.DefaultKeyword];
+                    name2 = "_default";
+                }
+                //test merging default export with namespace
+                return [...exportEquals, create.fn(mod, name2, parameters, returnType), ...ns2(name2, namespaceMembers, mod)];
             }
             case ValueKind.Class: {
                 const { name, members, namespaceMembers } = v;
-                return [...exportEquals, create.cls(mod, name, members), ...ns2(name, namespaceMembers, mod)];
+                let name2 = name; //!
+                if (name === "default") { //dup
+                    if (kind !== OutputKind.NamedExport) return emptyArray;
+                    mod = [SyntaxKind.ExportKeyword, SyntaxKind.DefaultKeyword];
+                    name2 = "_default";
+                }
+                return [...exportEquals, create.cls(mod, name2, members), ...ns2(name2, namespaceMembers, mod)];
             }
             case ValueKind.Namespace: {
                 const { name, members } = v;
-                return kind === OutputKind.ExportEquals
-                    ? flatMap(members, v => toStatements(v, OutputKind.NamedExport))
-                    : [create.namespace(mod, name, flatMap(members, toNamespaceMemberStatements))];
+                if (kind === OutputKind.ExportEquals) {
+                    return flatMap(members, v => toStatements(v, OutputKind.NamedExport));
+                }
+
+                let name2 = name; //!
+                if (name === "default") { //dup
+                    if (kind !== OutputKind.NamedExport) return emptyArray;
+                    mod = [SyntaxKind.ExportKeyword, SyntaxKind.DefaultKeyword];
+                    name2 = "_default";
+                }
+                //for decault, `declare namespace _default {}; export default _default;`
+                const ns = create.namespace(mod, name2, flatMap(members, toNamespaceMemberStatements));
+                return [...(name === "default" ? [create.exportDefault("_default")] : emptyArray), ns];
             }
             default:
                 return Debug.assertNever(v);
         }
     }
     //name
-    function ns2(name: string, namespaceMembers: ReadonlyArray<Statement>, mod: Modifier["kind"] | undefined): ReadonlyArray<Statement> {
+    function ns2(name: string, namespaceMembers: ReadonlyArray<Statement>, mod: create.Modifiers): ReadonlyArray<Statement> {
         return namespaceMembers.length === 0 ? emptyArray : [create.namespace(mod, name, namespaceMembers)];
     }
     //name
@@ -87,7 +128,7 @@ namespace ts {
 
         const classStaticMembers: ClassElementLike[] | undefined =
             //If !fnAst, this is a class (with no declared constructor)
-            classNonStaticMembers.length !== 0 || !fnAst || fnAst.kind === SyntaxKind.FunctionExpression ? [] : undefined;
+            classNonStaticMembers.length !== 0 || !fnAst || fnAst.kind === SyntaxKind.Constructor ? [] : undefined;
         const namespaceMembers = flatMap(getEntriesOfObject(obj), ({ key, value }) => {
             const info = getValueInfo(key, value);
             if (!info) return;
@@ -100,7 +141,7 @@ namespace ts {
                     }
                     case ValueKind.Function: {
                         const { name, parameters, returnType, namespaceMembers: itsNamespaceMembers } = info;
-                        classStaticMembers.push(create.method(SyntaxKind.StaticKeyword, name, parameters, returnType, /*comment*/ undefined));
+                        classStaticMembers.push(create.method(SyntaxKind.StaticKeyword, name, parameters, returnType));
                         return itsNamespaceMembers.length ? ns2Declare(name, itsNamespaceMembers) : undefined;
                     }
                 }
@@ -125,6 +166,14 @@ namespace ts {
             : { kind: ValueKind.Const, name, type: getTypeOfValue(obj), comment: undefined }
     }
 
+    function getBuiltinType(value: object): string | undefined {
+        for (const builtinName in builtins) {
+            if (builtins[builtinName] && value instanceof builtins[builtinName]!) {
+                return builtinName;
+            }
+        }
+    }
+
     //neater (check uses)
     const builtins: { readonly [name: string]: (new (...args: unknown[]) => unknown) | undefined } = {
         Date,
@@ -133,45 +182,24 @@ namespace ts {
         //HTMLElement: (typeof HTMLElement !== 'undefined') ? HTMLElement : undefined, //todo
     };
     function getTypeOfValue(value: unknown): TypeNode {
-        //todo: do better for "function" here? this is the case if it has something that has a function. module.exports = { a: { b: function() {} } };
-        if (typeof value !== "object" || value === null) return typeFromTypeof(value);
+        if (value == null) return create.any();
+        const to = typeof value;
+        if (to !== "object") {
+            //fn may happen for array with function as first element. But usually handled outside.
+            return to === "function" ? create.typeReference("Function") : createKeywordTypeNode(ts.stringToToken(to) as KeywordTypeNode["kind"]);
+        }
 
         if (Array.isArray(value)) return createArrayTypeNode(value.length ? getTypeOfValue(value[0]) : create.any());
 
-        for (const builtinName in builtins) {
-            if (builtins[builtinName] && value instanceof builtins[builtinName]!) {
-                return create.typeReference(builtinName);
-            }
-        }
+        //neater
+        const b = getBuiltinType(value as object);
+        if (b) return create.typeReference(b);
 
         walkStack.add(value);
-        const members = getPropertyDeclarationsOfObject(value as object);
+        const members = getEntriesOfObject(value as object).map(({ key, value }) =>
+            create.propertySignature(key, walkStack.has(value) ? create.any() : getTypeOfValue(value)));
         walkStack.delete(value);
         return createTypeLiteralNode(members);
-    }
-
-    function typeFromTypeof(obj: unknown): TypeNode {
-        const to = typeof obj;
-        if (to === "function") return create.typeReference("Function");
-        return createKeywordTypeNode((() => {
-            switch (to) {
-                case "boolean": return SyntaxKind.BooleanKeyword;
-                case "number": return SyntaxKind.NumberKeyword;
-                case "string": return SyntaxKind.StringKeyword;
-                case "symbol": return SyntaxKind.SymbolKeyword;
-                case "undefined": return SyntaxKind.AnyKeyword;
-                case "object": return obj === null ? SyntaxKind.AnyKeyword : SyntaxKind.ObjectKeyword;
-                default: return Debug.assertNever(to);
-            }
-        })());
-    }
-
-    function getPropertyDeclarationsOfObject(obj: object): ReadonlyArray<PropertySignature> {
-        walkStack.add(obj);
-        const result = getEntriesOfObject(obj).map(({ key, value }) =>
-            create.propertySignature(key, walkStack.has(value) ? create.any() : getTypeOfValue(value)));
-        walkStack.delete(obj);
-        return result;
     }
 
     // Parses assignments to 'this.x' in the constructor into class property declarations
@@ -180,22 +208,27 @@ namespace ts {
         forEachOwnNodeOfFunction(fnAst, node => {
             if (ts.isAssignmentExpression(node, /*excludeCompoundAssignment*/ true) &&
                 isPropertyAccessExpression(node.left) && node.left.expression.kind === ts.SyntaxKind.ThisKeyword) {
-                members.push(create.property(/*modifier*/ undefined, node.left.name.text, create.any(), /*comment*/ undefined));
+                const name = node.left.name.text;
+                if (!isJsPrivate(name)) members.push(create.property(/*modifier*/ undefined, name, create.any()));
             }
         });
         return members;
     }
 
-    function getPrototypeMembers(ctor: AnyFunction): ReadonlyArray<MethodDeclaration> {
-        return mapDefined(Object.getOwnPropertyNames(ctor.prototype).sort(), name => {
-            if (name === "constructor" || name.startsWith("_")) return undefined;
-            const obj = Object.getOwnPropertyDescriptor(ctor.prototype, name)!.value;
+    function getPrototypeMembers(fn: AnyFunction): ReadonlyArray<MethodDeclaration> {
+        return !fn.prototype ? emptyArray : mapDefined(Object.getOwnPropertyNames(fn.prototype).sort(), name => {
+            if (name === "constructor" || isJsPrivate(name)) return undefined;
+            const obj = Object.getOwnPropertyDescriptor(fn.prototype, name)!.value;
             const fnAst = parseClassOrFunctionBody(obj as AnyFunction);
             if (!fnAst) return;
             const { parameters, returnType } = getParameterListAndReturnType(obj as AnyFunction, fnAst);
             const comment = isNativeFunction(obj as AnyFunction) ? 'Native method; no parameter or return type inference available' : undefined;
             return create.method(/*modifier*/ undefined, name, parameters, returnType, comment);
         });
+    }
+
+    function isJsPrivate(name: string): boolean {
+        return name.startsWith("_");
     }
 
     function getParameterListAndReturnType(obj: AnyFunction, fnAst: FunctionOrConstructor): { readonly parameters: ReadonlyArray<ParameterDeclaration>, readonly returnType: TypeNode } {
@@ -216,13 +249,35 @@ namespace ts {
         return { parameters, returnType: hasReturn ? create.any() : create.voidType() };
     }
 
-    type FunctionOrConstructor = FunctionExpression | ConstructorDeclaration;
+    //name
+    type FunctionOrConstructor = FunctionExpression | ArrowFunction | ConstructorDeclaration | MethodDeclaration;
     function parseClassOrFunctionBody(fn: AnyFunction): FunctionOrConstructor | undefined {
-        const text = `const _ = ${fn.toString()};`;
+        //(function(){}).toString() is `function() {}`
+        //(() => 0).toString() is `() => 0`
+        //(x => x).toString() is `x => x`
+        //(class{}).toString() is `class{}`
+        //`(class{ constructor(p) {} m() {} }).toString()` is the class source -- means we can parse the constructor.
+        //(class{ m() {} }).prototype.m.toString() is `m() {}`
+        //  similarly, ({ m() {} }).m.toString() is `m() {}`
+
+        //Therefore, we know it will begin with `function`, `class`, `(`, or a method name.
+        const str = fn.toString();
+        //if (str.startsWith("function") || str.startsWith("(") || str.startsWith("class")) {
+        const expr = parseExpression(str);
+        const classOrFunction = tryCast(expr, (node): node is FunctionExpression | ArrowFunction | ClassExpression => isFunctionExpression(node) || isArrowFunction(node) || isClassExpression(node));
+        if (classOrFunction) {
+            return classOrFunction.kind === SyntaxKind.ClassExpression ? find(classOrFunction.members, isConstructorDeclaration) : classOrFunction;
+        }
+        else {
+            //it's a method `m() {}`
+            return cast(first(cast(parseExpression(`{ ${str} }`), isObjectLiteralExpression).properties), isMethodDeclaration);
+        }
+    }
+
+    function parseExpression(expr: string): Expression {
+        const text = `const _ = ${expr}`;
         const srcFile = createSourceFile("test.ts", text, ScriptTarget.Latest, /*setParentNodes*/ true);
-        const expr = first(cast(first(srcFile.statements), isVariableStatement).declarationList.declarations).initializer!;
-        const classOrFunction = cast(expr, (node): node is FunctionExpression | ClassExpression => isFunctionExpression(node) || isClassExpression(node));
-        return classOrFunction.kind === SyntaxKind.FunctionExpression ? classOrFunction : find(classOrFunction.members, isConstructorDeclaration);
+        return first(cast(first(srcFile.statements), isVariableStatement).declarationList.declarations).initializer!;
     }
 
     function isNativeFunction(fn: AnyFunction): boolean {
@@ -262,9 +317,9 @@ namespace ts {
     }
 
     namespace create {
-        export type Modifiers = Modifier["kind"] | undefined;
+        export type Modifiers = ReadonlyArray<Modifier["kind"]> | Modifier["kind"] | undefined;
         function toModifiers(modifier: Modifiers): ReadonlyArray<Modifier> | undefined {
-            return modifier === undefined ? undefined : [createModifier(modifier) as Modifier]
+            return modifier === undefined ? undefined :  toArray(modifier).map(createModifier) as ReadonlyArray<Modifier>;
         }
 
         export function constVar(modifiers: Modifiers, name: string, type: TypeNode, comment: string | undefined): VariableStatement {
@@ -282,7 +337,7 @@ namespace ts {
         export function typeReference(name: string): TypeReferenceNode {
             return createTypeReferenceNode(name, /*typeArguments*/ undefined);
         }
-        export function fn(modifiers: Modifiers, name: string, parameters: ReadonlyArray<ParameterDeclaration>, returnType: TypeNode): FunctionDeclaration {
+        export function fn(modifiers: Modifiers, name: string | undefined, parameters: ReadonlyArray<ParameterDeclaration>, returnType: TypeNode): FunctionDeclaration {
             return createFunctionDeclaration(/*decorators*/ undefined, toModifiers(modifiers), /*asteriskToken*/ undefined, name, /*typeParameters*/ undefined, parameters, returnType, /*body*/ undefined);
         }
         export function cls(modifiers: Modifiers, name: string, elements: ReadonlyArray<ClassElement>): ClassDeclaration {
@@ -297,7 +352,7 @@ namespace ts {
         export function restParameter(name: string, type: TypeNode): ParameterDeclaration {
             return createParameter(/*decorators*/ undefined, /*modifiers*/ undefined, /*dotDotDotToken*/ createToken(SyntaxKind.DotDotDotToken), name, /*questionToken*/ undefined, type, /*initializer*/ undefined);
         }
-        export function method(modifier: Modifiers, name: string, parameters: ReadonlyArray<ParameterDeclaration>, returnType: TypeNode, comment: string | undefined): MethodDeclaration {
+        export function method(modifier: Modifiers, name: string, parameters: ReadonlyArray<ParameterDeclaration>, returnType: TypeNode, comment?: string): MethodDeclaration {
             comment; //todo
             return createMethod(
                 /*decorators*/ undefined,
@@ -310,18 +365,21 @@ namespace ts {
                 returnType,
                 /*body*/ undefined);
         }
-        export function property(modifier: Modifier["kind"] | undefined, name: string, type: TypeNode, comment: string | undefined): PropertyDeclaration {
+        export function property(modifier: Modifiers, name: string, type: TypeNode, comment?: string): PropertyDeclaration {
             comment; //todo
             return createProperty(/*decorators*/ undefined, toModifiers(modifier), name, /*questionOrExclamationToken*/ undefined, type, /*initializer*/ undefined);
         }
         export function propertySignature(name: string, type: TypeNode): PropertySignature {
             return createPropertySignature(/*modifiers*/ undefined, name, /*questionToken*/ undefined, type, /*initializer*/ undefined);
         }
-        export function namespace(modifier: Modifier["kind"] | undefined, name: string, statements: ReadonlyArray<Statement>): NamespaceDeclaration {
-            return createModuleDeclaration(/*decorators*/ undefined, toModifiers(modifier), createIdentifier(name), createModuleBlock(statements)) as NamespaceDeclaration;
+        export function namespace(modifier: Modifiers, name: string, statements: ReadonlyArray<Statement>): NamespaceDeclaration {
+            return createModuleDeclaration(/*decorators*/ undefined, toModifiers(modifier), createIdentifier(name), createModuleBlock(statements), NodeFlags.Namespace) as NamespaceDeclaration;
         }
         export function exportEquals(name: string): ExportAssignment {
             return createExportAssignment(/*decorators*/ undefined, /*modifiers*/ undefined, /*isExportEquals*/ true, createIdentifier(name));
+        }
+        export function exportDefault(name: string): ExportAssignment {
+            return createExportAssignment(/*decorators*/ undefined, /*modifiers*/ undefined, /*isExportEquals*/ false, createIdentifier(name));
         }
     }
 }

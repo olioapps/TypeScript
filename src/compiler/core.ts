@@ -2129,6 +2129,6 @@ namespace ts {
     }
 
     export function fill<T>(length: number, cb: (index: number) => T): T[] {
-        return new Array(length).map((_, i) => cb(i));
+        return new Array(length).fill(0).map((_, i) => cb(i));
     }
 }

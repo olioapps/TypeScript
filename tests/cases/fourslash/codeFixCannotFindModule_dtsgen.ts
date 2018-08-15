@@ -1,5 +1,7 @@
 /// <reference path='fourslash.ts' />
 
+// See `generateTypes.ts` for tests of the type genration specifically.
+
 // @Filename: /node_modules/plus/index.js
 ////module.exports = function plus(x, y) { return x * y; };
 

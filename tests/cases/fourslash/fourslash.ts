@@ -353,7 +353,7 @@ declare namespace FourSlashInterface {
     //mv
     interface GenerateTypesOptions {
         readonly name?: string;
-        readonly source: string;
+        readonly value: unknown;
         readonly output: string;
     }
     class edit {
