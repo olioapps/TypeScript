@@ -802,10 +802,7 @@ namespace ts {
     /**
      * Deduplicates an array that has already been sorted.
      */
-    function deduplicateSorted<T>(array: ReadonlyArray<T>, comparer: EqualityComparer<T> | Comparer<T>): T[];
-    function deduplicateSorted<T>(array: ReadonlyArray<T> | undefined, comparer: EqualityComparer<T> | Comparer<T>): T[] | undefined;
-    function deduplicateSorted<T>(array: ReadonlyArray<T> | undefined, comparer: EqualityComparer<T> | Comparer<T>): T[] | undefined {
-        if (!array) return undefined;
+    function deduplicateSorted<T>(array: ReadonlyArray<T>, comparer: EqualityComparer<T> | Comparer<T>): T[] {
         if (array.length === 0) return [];
 
         let last = array[0];

@@ -1,264 +1,182 @@
 /* @internal */
 namespace ts {
-    //rt type
     export function generateTypesForModule(packageName: string, moduleValue: unknown): ReadonlyArray<Statement> | undefined {
         const localName = codefix.moduleSpecifierToValidIdentifier(packageName, ScriptTarget.ESNext);
-        const decls = getDeclarationsFromValue(localName, moduleValue);
+        const decls = getValueInfo(localName, moduleValue);
         return decls && topLevelFoo(decls);
     }
 
-    const walkStack = new Set<any>();
-
-    const reservedFunctionProperties = Object.getOwnPropertyNames(() => { });
-    //getentries instead
-    function getKeysOfObject(obj: object) {
+    const ignoredProperties: ReadonlySet<string> = new Set(["caller", "arguments", "constructor", "super_"]);
+    const reservedFunctionProperties: ReadonlySet<string> = new Set(Object.getOwnPropertyNames(() => { }));
+    function getKeysOfObject(obj: object): ReadonlyArray<string> {
         let keys: string[] = [];
-        let chain: {} = obj;
-        do {
-            if (chain == null) break;
-            keys = keys.concat(Object.getOwnPropertyNames(chain));
+        let chain = obj;
+        while (chain != null && chain != Object.prototype && chain != Function.prototype) {
+            keys.push(...Object.getOwnPropertyNames(chain));
             chain = Object.getPrototypeOf(chain);
-        } while (chain !== Object.prototype && chain !== Function.prototype);
-        keys = Array.from(new Set(keys));
-        keys = keys.filter(s => (s[0] !== '_') && (["caller", "arguments", "constructor", "super_"].indexOf(s) < 0));
-        if (typeof obj === 'function') {
-            keys = keys.filter(k => reservedFunctionProperties.indexOf(k) < 0);
         }
-
-        keys.sort();
-        return keys;
+        return sortAndDeduplicate<string>(
+            keys.filter(k => k[0] !== '_' && !ignoredProperties.has(k) && (typeof obj !== "function" || !reservedFunctionProperties.has(k))),
+            ts.compareStringsCaseSensitive);
     }
 
-    //name
-    function isObjectClassLike(obj: { prototype: unknown }): boolean {
-        return !!(obj.prototype && Object.getOwnPropertyNames(obj.prototype).length > 1);
+    interface ObjectEntry { readonly key: string; readonly value: unknown; }
+    function getEntriesOfObject(obj: object): ReadonlyArray<ObjectEntry> {
+        return getKeysOfObject(obj).map(key => ({ key, value: (obj as any)[key] })); //todo: fear getters
     }
-
-    //!
-    type TopLevelDeclaration = ClassDeclaration | FunctionDeclaration | VariableStatement | NamespaceDeclaration;
 
     const keyStack: string[] = []; //TODO: not global
-
-    /*
-    A value must be one of:
-    - plain function/class/primitive (export =)
-    - function/class and namespace (function merged with namespace -- give up for static?)
-    - just an object (pure namespace)
-    */
-    //NOTE: if sending to a class, use static method instead of namespace if possible (TEST)
-    //RETURN: optional export=, optional namespace
-    //PARAM: need to know whether to add `export` directly (for object), or `static` property/method
-    function getDeclarationsFromValue(name: string, obj: unknown): ValueInfo | undefined {
+    const walkStack = new Set<any>();//todo: not global
+    function getValueInfo(name: string, obj: unknown): ValueInfo | undefined {
         if (walkStack.has(obj) || keyStack.length > 4) {
             //Circular or too-deep reference
-            return { kind: "const", name, type: create.any(), comment: `${walkStack.has(obj) ? 'Circular reference' : 'Too-deep object hierarchy'} from ${keyStack.join('.')}` }
+            return { kind: ValueKind.Const, name, type: create.any(), comment: `${walkStack.has(obj) ? 'Circular reference' : 'Too-deep object hierarchy'} from ${keyStack.join('.')}` }
         }
 
         if (!ts.isIdentifierText(name, ts.ScriptTarget.ESNext)) return undefined;
 
         walkStack.add(obj);
         keyStack.push(name);
-        const res = ((): ValueInfo => {
-            const typeofObj = typeof obj;
-            switch (typeofObj) {
-                case "function":
-                    return fooFn(obj as AnyFunction, name);
-                case "object":
-                    return fooObj(obj as object, name); // TODO: GH#26327
-                case "boolean":
-                case "number":
-                case "string":
-                case "symbol":
-                case "undefined":
-                    return { kind: "const", name, type: typeFromTypeof(obj), comment: undefined };
-                default:
-                    return Debug.assertNever(typeofObj);
-            }
-        })();
+        const res: ValueInfo = typeof obj === "function" ? getFunctionInfo(obj as AnyFunction, name)
+            : typeof obj === "object" ?  getObjectInfo(obj as object, name)
+            : { kind: ValueKind.Const, name, type: typeFromTypeof(obj), comment: undefined };
         keyStack.pop();
         walkStack.delete(obj);
         return res;
     }
 
-    //name
-    type ValueInfo =
-        | { kind: "const", name: string, type: TypeNode, comment: string | undefined }
-        | { kind: "function", name: string, parameters: ReadonlyArray<ParameterDeclaration>, returnType: TypeNode, ns: NS2 | undefined }
-        | { kind: "class", name: string, members: ReadonlyArray<ClassElementLike>, ns: NS2 | undefined }
-        | { kind: "namespace", ns: NS };
-    //name
-    type NS = { name: string, members: ReadonlyArray<ValueInfo> };
-    //name2
-    type NS2 = { name: string, members: ReadonlyArray<TopLevelDeclaration> }; //name is redundant, stored in parent
-
-    function topLevelFoo(v: ValueInfo): ReadonlyArray<Statement> {
-        switch (v.kind) {
-            case "const": {
-                const { name, type, comment } = v;
-                return [create.exportEquals(name), create.constVar(SyntaxKind.DeclareKeyword, name, type, comment)];
-            }
-            case "function": {
-                const { name, parameters, returnType, ns } = v;
-                return [create.exportEquals(name), create.fn(SyntaxKind.DeclareKeyword, name, parameters, returnType), ...ns2(ns, SyntaxKind.DeclareKeyword)];
-            }
-            case "class": {
-                const { name, members, ns } = v;
-                return [create.exportEquals(name), create.cls(SyntaxKind.DeclareKeyword, name, members), ...ns2(ns, SyntaxKind.DeclareKeyword)];
-            }
-            case "namespace": {
-                const { ns } = v;
-                return flatMap(ns.members, exportFoo);
-            }
-            default:
-                return Debug.assertNever(v);
-        }
+    const enum ValueKind { Const, Function, Class, Namespace }
+    interface ValueInfoBase { readonly name: string; }
+    type ValueInfo = ConstInfo | FunctionInfo | ClassInfo | NamespaceInfo;
+    interface ConstInfo extends ValueInfoBase { readonly kind: ValueKind.Const; readonly type: TypeNode; readonly comment: string | undefined; }
+    interface FunctionInfo extends ValueInfoBase {
+        readonly kind: ValueKind.Function;
+        readonly parameters: ReadonlyArray<ParameterDeclaration>;
+        readonly returnType: TypeNode;
+        readonly namespaceMembers: ReadonlyArray<Statement>;
     }
-    function exportFoo(v: ValueInfo): ReadonlyArray<TopLevelDeclaration> { return exportOrDeclareFoo(v, true); }
-    function declareFoo(v: ValueInfo): ReadonlyArray<TopLevelDeclaration> { return exportOrDeclareFoo(v, false); }
+    interface ClassInfo extends ValueInfoBase {
+        readonly kind: ValueKind.Class; readonly members: ReadonlyArray<ClassElementLike>; readonly namespaceMembers: ReadonlyArray<Statement> ;
+    }
+    interface NamespaceInfo extends ValueInfoBase {
+        readonly kind: ValueKind.Namespace;
+        readonly members: ReadonlyArray<ValueInfo>;
+    }
+
+    //inline
+    function topLevelFoo(v: ValueInfo): ReadonlyArray<Statement> { return exportOrDeclareFoo(v, "top"); }
+    //name
+    function exportFoo(v: ValueInfo): ReadonlyArray<Statement> { return exportOrDeclareFoo(v, "export"); }
+    //name
+    function declareFoo(v: ValueInfo): ReadonlyArray<Statement> { return exportOrDeclareFoo(v, "namespace-member"); }
     //some dup of above? isEpxport could take 3 cases...
-    function exportOrDeclareFoo(v: ValueInfo, isExport: boolean): ReadonlyArray<TopLevelDeclaration> {
-        const mod = isExport ? SyntaxKind.ExportKeyword : undefined;
+    //name
+    function exportOrDeclareFoo(v: ValueInfo, kind: "top" | "export" | "namespace-member"): ReadonlyArray<Statement> {
+        const mod = kind === "top" ? SyntaxKind.DeclareKeyword : kind === "export" ? SyntaxKind.ExportKeyword : undefined;
+        const ex = kind === "top" ? [create.exportEquals(v.name)] : emptyArray;
         switch (v.kind) {
-            case "const": {
+            case ValueKind.Const: {
                 const { name, type, comment } = v;
-                return [create.constVar(mod, name, type, comment)];
+                return [...ex, create.constVar(mod, name, type, comment)];
             }
-            case "function": {
-                const { name, parameters, returnType, ns } = v;
-                return [create.fn(mod, name, parameters, returnType), ...ns2(ns, mod)];
+            case ValueKind.Function: {
+                const { name, parameters, returnType, namespaceMembers } = v;
+                return [...ex, create.fn(mod, name, parameters, returnType), ...ns2(name, namespaceMembers, mod)];
             }
-            case "class": {
-                const { name, members, ns } = v;
-                return [create.cls(mod, name, members), ...ns2(ns, mod)];
+            case ValueKind.Class: {
+                const { name, members, namespaceMembers } = v;
+                return [...ex, create.cls(mod, name, members), ...ns2(name, namespaceMembers, mod)];
             }
-            case "namespace": {
-                const { ns } = v;
-                return [create.namespace(mod, ns.name, flatMap(ns.members, declareFoo))];
+            case ValueKind.Namespace: {
+                const { name, members } = v;
+                return kind === "top" ? flatMap(members, exportFoo) : [create.namespace(mod, name, flatMap(members, declareFoo))];
             }
             default:
                 return Debug.assertNever(v);
         }
     }
-    function ns2(ns2: NS2 | undefined, mod: Modifier["kind"] | undefined): ReadonlyArray<TopLevelDeclaration> {
-        return ns2 === undefined ? emptyArray : [create.namespace(mod, ns2.name, ns2.members)];
+    //name
+    function ns2(name: string, namespaceMembers: ReadonlyArray<Statement>, mod: Modifier["kind"] | undefined): ReadonlyArray<Statement> {
+        return namespaceMembers.length === 0 ? emptyArray : [create.namespace(mod, name, namespaceMembers)];
     }
-    function ns2Declare(ns2: NS2) {
-        return create.namespace(SyntaxKind.DeclareKeyword, ns2.name, ns2.members);
+    //name
+    function ns2Declare(name: string, namespaceMembers: ReadonlyArray<Statement>): NamespaceDeclaration {
+        return create.namespace(SyntaxKind.DeclareKeyword, name, namespaceMembers);
     }
 
-    function fooFn(obj: AnyFunction, name: string): ValueInfo { //name
+    function getFunctionInfo(obj: AnyFunction, name: string): FunctionInfo | ClassInfo { //name
         const funcType = getParameterListAndReturnType(obj, parseFunctionBody(obj));
 
         const isClass = isObjectClassLike(obj);
-        const classMembers: ClassElementLike[] = []; //neater?
 
         //Get clodule/fundule members
-        const namespaceMembers: TopLevelDeclaration[] = [];
-        for (const k of getKeysOfObject(obj)) {
-            const vi = getDeclarationsFromValue(k, (obj as any)[k]); //name
+        const xxNamespaceMembers: Statement[] = []; //name
+        const classStaticMembers: ClassElementLike[] = []; //neater?
+        for (const { key, value } of getEntriesOfObject(obj)) {
+            const vi = getValueInfo(key, value); //name
             if (!vi) continue;
             if (isClass) {
                 switch (vi.kind) {
-                    case "const": {
-                        //instead, static property
+                    case ValueKind.Const: {
                         const { name, type, comment } = vi;
-                        classMembers.push(create.staticProperty(name, type, comment));
+                        classStaticMembers.push(create.staticProperty(name, type, comment));
                         continue;
                     }
-                    case "function": {
-                        //instead, static method
-                        const { name, parameters, returnType, ns } = vi;
-                        classMembers.push(create.staticMethod(name, parameters, returnType));
-                        if (ns) namespaceMembers.push(ns2Declare(ns));
+                    case ValueKind.Function: {
+                        const { name, parameters, returnType, namespaceMembers } = vi;
+                        classStaticMembers.push(create.staticMethod(name, parameters, returnType));
+                        if (namespaceMembers.length) xxNamespaceMembers.push(ns2Declare(name, namespaceMembers));
                         continue;
                     }
                 }
             }
-            namespaceMembers.push(...declareFoo(vi));
+            xxNamespaceMembers.push(...declareFoo(vi));
         }
-        namespaceMembers.sort(declarationComparer);
 
-        const ns: NS2 | undefined = namespaceMembers.length !== 0 ? { name, members: namespaceMembers } : undefined;
         if (isClass) {
-            const members = [
-                ...getClassInstanceMembers(obj),
-                ...getClassPrototypeMembers(obj),
-                create.ctr(funcType[0]),
-                ...classMembers,
-            ].sort(declarationComparer);
-            return { kind: "class", name, members, ns }
+            const members = [...classStaticMembers, create.ctr(funcType[0]), ...getClassInstanceMembers(obj), ...getClassPrototypeMembers(obj)];
+            return { kind: ValueKind.Class, name, members, namespaceMembers: xxNamespaceMembers }
         }
         else {
-            return { kind: "function", name, parameters: funcType[0], returnType: funcType[1], ns }
+            return { kind: ValueKind.Function, name, parameters: funcType[0], returnType: funcType[1], namespaceMembers: xxNamespaceMembers }
         }
     }
-
-    function fooObj(obj: object, name: string): ValueInfo { //name
-        // If we can immediately resolve this to a simple declaration, just do so
-        const simpleType = getTypeOfValue(obj);
-        //pretty sure below would never happen.
-        //if (typeof simpleType === 'string' || simpleType.kind === 'name' || simpleType.kind === 'array') {
-        //    const result = create2.constVar(name, simpleType);
-        //    if (simpleType === 'string') {
-        //        result.comment = `Value of string: "${simpleType.substr(0, 100)}${simpleType.length > 100 ? '...' : ''}"`;
-        //    }
-        //    return [result];
-        //}
-
-        //If anything in here is classlike or functionlike, write it as a namespace.
-        //Otherwise, write as a 'const'
-        const keys = getKeysOfObject(obj);
-        const hasClassOrFunction = keys.some(k => typeof (<any>obj)[k] === "function"); //entries
-        return hasClassOrFunction
-            ? { kind: "namespace", ns: { name, members: flatMap(keys, k => getDeclarationsFromValue(k, (<any>obj)[k])) }}
-            : { kind: "const", name, type: simpleType, comment: undefined }
+    //name
+    function isObjectClassLike(obj: { prototype: unknown }): boolean {
+        return !!(obj.prototype && Object.getOwnPropertyNames(obj.prototype).length > 1);
     }
 
+    function getObjectInfo(obj: object, name: string): ConstInfo | NamespaceInfo {
+        const entries = getEntriesOfObject(obj);
+        const hasClassOrFunction = entries.some(({ value }) => typeof value === "function");
+        return hasClassOrFunction
+            ? { kind: ValueKind.Namespace, name, members: flatMap(entries, ({ key, value }) => getValueInfo(key, value)) }
+            : { kind: ValueKind.Const, name, type: getTypeOfValue(obj), comment: undefined }
+    }
 
     //neater (check uses)
-    const builtins: { [name: string]: (new (...args: unknown[]) => any) | undefined } = {
+    const builtins: { readonly [name: string]: (new (...args: unknown[]) => unknown) | undefined } = {
         Date,
         RegExp,
         Map: (typeof Map !== 'undefined') ? Map : undefined,
-        //HTMLElement: (typeof HTMLElement !== 'undefined') ? HTMLElement : undefined,
+        //HTMLElement: (typeof HTMLElement !== 'undefined') ? HTMLElement : undefined, //todo
     };
     function getTypeOfValue(value: unknown): TypeNode {
-        for (const k in builtins) {
-            if (builtins[k] && value instanceof builtins[k]!) {
-                return create.typeReference(k);
+        //todo: do better for "function" here? this is the case if it has something that has a function. module.exports = { a: { b: function() {} } };
+        if (typeof value !== "object" || value === null) return typeFromTypeof(value);
+
+        if (Array.isArray(value)) return createArrayTypeNode(value.length ? getTypeOfValue(value[0]) : create.any());
+
+        for (const builtinName in builtins) {
+            if (builtins[builtinName] && value instanceof builtins[builtinName]!) {
+                return create.typeReference(builtinName);
             }
         }
 
-        if (Array.isArray(value)) {
-            if (value.length > 0) {
-                return createArrayTypeNode(getTypeOfValue(value[0]));
-            } else {
-                return createArrayTypeNode(create.any());
-            }
-        }
-
-        const type = typeof value;
-        switch (type) {
-            case "string":
-            case "number":
-            case "boolean":
-            case "symbol":
-            case "function":
-                return typeFromTypeof(value);
-            case 'undefined':
-                return create.any();
-            case 'object':
-                if (value === null) {
-                    return create.any();
-                } else {
-                    walkStack.add(value);
-                    const members = getPropertyDeclarationsOfObject(value as object); // https://github.com/Microsoft/TypeScript/issues/25720#issuecomment-407237691
-                    walkStack.delete(value);
-                    return createTypeLiteralNode(members);
-                }
-            default:
-                return Debug.assertNever(type);
-        }
+        walkStack.add(value);
+        const members = getPropertyDeclarationsOfObject(value as object); //https://github.com/Microsoft/TypeScript/issues/25720#issuecomment-407237691
+        walkStack.delete(value);
+        return createTypeLiteralNode(members);
     }
 
     function typeFromTypeof(obj: unknown): TypeNode {
@@ -266,8 +184,6 @@ namespace ts {
         if (to === "function") return create.typeReference("Function");
         return createKeywordTypeNode((() => {
             switch (to) {
-                case "object":
-                    return obj === null ? SyntaxKind.NullKeyword : SyntaxKind.ObjectKeyword;
                 case "boolean":
                     return SyntaxKind.BooleanKeyword;
                 case "number":
@@ -277,7 +193,9 @@ namespace ts {
                 case "symbol":
                     return SyntaxKind.SymbolKeyword;
                 case "undefined":
-                    return SyntaxKind.UndefinedKeyword;
+                    return SyntaxKind.AnyKeyword;
+                case "object":
+                    return obj === null ? SyntaxKind.AnyKeyword : SyntaxKind.ObjectKeyword;
                 default:
                     return Debug.assertNever(to);
             }
@@ -286,10 +204,9 @@ namespace ts {
 
     function getPropertyDeclarationsOfObject(obj: object): ReadonlyArray<PropertySignature> {
         walkStack.add(obj);
-        //use eachentry
-        const result = getKeysOfObject(obj).map(k => create.propertySignature(k, walkStack.has((obj as any)[k]) ? create.any() : getTypeOfValue((obj as any)[k])));
+        const result = getEntriesOfObject(obj).map(({ key, value }) =>
+            create.propertySignature(key, walkStack.has(value) ? create.any() : getTypeOfValue(value)));
         walkStack.delete(obj);
-        result.sort(declarationComparer);
         return result;
     }
 
@@ -333,24 +250,6 @@ namespace ts {
         }
 
         return members;
-    }
-
-    type Ttt = ClassElementLike | TopLevelDeclaration | PropertySignature; //name
-    //todo: sort *before* convert to nodes?
-    function declarationComparer(left: Ttt, right: Ttt): number {
-        return left.kind === right.kind
-            ? compareStringsCaseSensitive(getName(left), getName(right))
-            : compareValues(left.kind, right.kind);
-    }
-    function getName(node: Ttt): string { //neater
-        return node.kind === SyntaxKind.VariableStatement
-            ? onlyVar(node).name
-            : cast(node.name, isIdentifier).text; //watch out for stringliterals tho
-    }
-    //!
-    function onlyVar(node: VariableStatement) {//rt type
-        const decl = first(node.declarationList.declarations);
-        return { name: cast(decl.name, isIdentifier).text, type: Debug.assertDefined(decl.type) };
     }
 
     //mv
