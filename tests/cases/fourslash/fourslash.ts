@@ -347,6 +347,14 @@ declare namespace FourSlashInterface {
             readonly preferences?: UserPreferences;
         }): void;
         noMoveToNewFile(): void;
+
+        generateTypes(...options: GenerateTypesOptions[]): void;
+    }
+    //mv
+    interface GenerateTypesOptions {
+        readonly name?: string;
+        readonly source: string;
+        readonly output: string;
     }
     class edit {
         backspace(count?: number): void;

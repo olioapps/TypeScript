@@ -225,6 +225,13 @@ namespace ts.textChanges {
             return tracker.getChanges();
         }
 
+        //!
+        public static with2(newline: string, formatContext: formatting.FormatContext, cb: (tracker: ChangeTracker) => void): FileTextChanges[] {
+            const tracker = new ChangeTracker(newline, formatContext);
+            cb(tracker);
+            return tracker.getChanges();
+        }
+
         /** Public for tests only. Other callers should use `ChangeTracker.with`. */
         constructor(private readonly newLineCharacter: string, private readonly formatContext: formatting.FormatContext) {}
 
@@ -730,6 +737,11 @@ namespace ts.textChanges {
         return { fileName, textChanges: [createTextChange(createTextSpan(0, 0), text)], isNewFile: true };
     }
 
+    //just for tests
+    export function getNewFileText(statements: ReadonlyArray<Statement>, newLineCharacter: string, formatContext: formatting.FormatContext): string {
+        return changesToText.newFileChangesWorker(/*oldFile*/ undefined, statements, newLineCharacter, formatContext)
+    }
+
     namespace changesToText {
         export function getTextChangesFromChanges(changes: ReadonlyArray<Change>, newLineCharacter: string, formatContext: formatting.FormatContext, validate: ValidateNonFormattedText | undefined): FileTextChanges[] {
             return group(changes, c => c.sourceFile.path).map(changesInFile => {
@@ -749,12 +761,16 @@ namespace ts.textChanges {
         }
 
         export function newFileChanges(oldFile: SourceFile | undefined, fileName: string, statements: ReadonlyArray<Statement>, newLineCharacter: string, formatContext: formatting.FormatContext): FileTextChanges {
+            return newFileTextChange(fileName, newFileChangesWorker(oldFile, statements, newLineCharacter, formatContext));
+        }
+
+        //!
+        export function newFileChangesWorker(oldFile: SourceFile | undefined, statements: ReadonlyArray<Statement>, newLineCharacter: string, formatContext: formatting.FormatContext): string {
             // TODO: this emits the file, parses it back, then formats it that -- may be a less roundabout way to do this
             const nonFormattedText = statements.map(s => getNonformattedText(s, oldFile, newLineCharacter).text).join(newLineCharacter);
-            const sourceFile = createSourceFile(fileName, nonFormattedText, ScriptTarget.ESNext, /*setParentNodes*/ true);
+            const sourceFile = createSourceFile("any file name", nonFormattedText, ScriptTarget.ESNext, /*setParentNodes*/ true);
             const changes = formatting.formatDocument(sourceFile, formatContext);
-            const text = applyChanges(nonFormattedText, changes);
-            return newFileTextChange(fileName, text);
+            return applyChanges(nonFormattedText, changes);
         }
 
         function computeNewText(change: Change, sourceFile: SourceFile, newLineCharacter: string, formatContext: formatting.FormatContext, validate: ValidateNonFormattedText | undefined): string {

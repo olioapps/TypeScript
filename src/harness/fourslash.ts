@@ -3457,6 +3457,18 @@ Actual: ${stringify(fullActual)}`);
         private getApplicableRefactorsWorker(positionOrRange: number | ts.TextRange, fileName: string, preferences = ts.emptyOptions): ReadonlyArray<ts.ApplicableRefactorInfo> {
             return this.languageService.getApplicableRefactors(fileName, positionOrRange, preferences) || ts.emptyArray;
         }
+
+        public generateTypes(examples: ReadonlyArray<FourSlashInterface.GenerateTypesOptions>): void {
+            const formatContext = ts.formatting.getFormatContext(this.formatCodeSettings);
+            for (const { name = "example", source, output } of examples) {
+                const moduleValue = ts.tryRequireFromString(source, name);
+                const outputStatements = ts.generateTypesForModule(name, moduleValue);
+                const actual = outputStatements && ts.textChanges.getNewFileText(outputStatements, "\n", formatContext);
+                if (actual !== output) {
+                    assert.equal(actual, output, `generateTypes output for ${name} does not match`);
+                }
+            }
+        }
     }
 
     function renameKeys<T>(obj: { readonly [key: string]: T }, renameKey: (key: string) => string): { readonly [key: string]: T } {
@@ -4550,6 +4562,17 @@ namespace FourSlashInterface {
         public noMoveToNewFile(): void {
             this.state.noMoveToNewFile();
         }
+
+        public generateTypes(...options: GenerateTypesOptions[]): void {
+            this.state.generateTypes(options);
+        }
+    }
+
+    //mv
+    export interface GenerateTypesOptions {
+        readonly name?: string;
+        readonly source: string;
+        readonly output: string | undefined;
     }
 
     export class Edit {

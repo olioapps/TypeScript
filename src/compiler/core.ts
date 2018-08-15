@@ -2127,4 +2127,8 @@ namespace ts {
             deleted(oldItems[oldIndex++]);
         }
     }
+
+    export function fill<T>(length: number, cb: (index: number) => T): T[] {
+        return new Array(length).map((_, i) => cb(i));
+    }
 }
