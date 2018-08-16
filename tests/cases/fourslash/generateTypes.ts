@@ -48,20 +48,24 @@ declare class example {
     output: `export const x: number;`,
 },
 {
-    value: class {
-        _privateField = 0;
-        field = 0;
-        fnField = () => 0;
+    value: (() => {
+        class C {
+            _privateField = 0;
+            field = 0;
+            fnField = () => 0;
 
-        _privateMethod() {}
-        method(_p) {}
+            _privateMethod() {}
+            method(_p) {}
 
-        static _privateStatic() {}
-        static staticMethod(_s: any) {}
+            static _privateStatic() {}
+            static staticMethod(_s: any) {}
 
-        static _privateStaticField = 0;
-        static staticField = 0;
-    },
+            static _privateStaticField = 0;
+            static staticField = 0;
+        }
+        (C.prototype as any).prototypeNonFunction = 0; // ignored
+        return C;
+    })(),
     output:
 `export = example;
 declare class example {

@@ -3439,8 +3439,7 @@ Actual: ${stringify(fullActual)}`);
 
         public generateTypes(examples: ReadonlyArray<FourSlashInterface.GenerateTypesOptions>): void {
             for (const { name = "example", value, output } of examples) {
-                //const moduleValue = ts.tryRequireFromString(source, name);
-                const actual = ts.generateTypesForModuleAsString(name, value);
+                const actual = ts.generateTypesForModule(name, value);
                 if (actual !== output) {
                     assert.equal(actual, output, `generateTypes output for ${name} does not match`);
                 }

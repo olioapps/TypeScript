@@ -97,7 +97,7 @@ namespace ts.codefix {
     function doDoTryGenerateTypes(packageName: string, importingFileName: string, host: LanguageServiceHost): ReadonlyArray<Statement> | undefined {
         const resolved = tryResolveJavaScriptModule(packageName, getDirectoryPath(importingFileName), host as ModuleResolutionHost); // TODO: GH#18217
         const x = resolved === undefined ? undefined : host.tryRequire && host.tryRequire(resolved);
-        return x === undefined ? undefined : generateTypesForModule(packageName, x);
+        return x === undefined ? undefined : generateTypesForModuleAsStatements(packageName, x);
     }
 
     function getCommand(fileName: string, packageName: string): InstallPackageAction {
