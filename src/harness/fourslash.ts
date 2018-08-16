@@ -1698,11 +1698,7 @@ Actual: ${stringify(fullActual)}`);
         }
 
         public baselineQuickInfo() {
-            let baselineFile = this.testData.globalOptions[MetadataOptionNames.baselineFile];
-            if (!baselineFile) {
-                baselineFile = ts.getBaseFileName(this.activeFile.fileName).replace(ts.Extension.Ts, ".baseline");
-            }
-
+            const baselineFile = this.testData.globalOptions[MetadataOptionNames.baselineFile] || this.getDefaultBaselineFileName();
             Harness.Baseline.runBaseline(
                 baselineFile,
                 () => stringify(
@@ -1711,6 +1707,10 @@ Actual: ${stringify(fullActual)}`);
                         quickInfo: this.languageService.getQuickInfoAtPosition(marker.fileName, marker.position)
                     }))
                 ));
+        }
+
+        private getDefaultBaselineFileName() {
+            return ts.getBaseFileName(this.activeFile.fileName).replace(ts.Extension.Ts, ".baseline");
         }
 
         public printBreakpointLocation(pos: number) {
@@ -3438,9 +3438,13 @@ Actual: ${stringify(fullActual)}`);
         }
 
         public generateTypes(examples: ReadonlyArray<FourSlashInterface.GenerateTypesOptions>): void {
-            for (const { name = "example", value, output } of examples) {
+            for (const { name = "example", value, output, outputBaseline } of examples) {
                 const actual = ts.generateTypesForModule(name, value);
-                if (actual !== output) {
+                if (outputBaseline) {
+                    if (actual === undefined) throw ts.Debug.fail();
+                    Harness.Baseline.runBaseline(ts.combinePaths("generateTypes", outputBaseline + ts.Extension.Dts), () => actual);
+                }
+                else {
                     assert.equal(actual, output, `generateTypes output for ${name} does not match`);
                 }
             }
@@ -4548,7 +4552,9 @@ namespace FourSlashInterface {
     export interface GenerateTypesOptions {
         readonly name?: string;
         readonly value: unknown;
-        readonly output: string | undefined;
+        // Exactly one of thes should be set.
+        readonly output?: string | undefined;
+        readonly outputBaseline?: string;
     }
 
     export class Edit {

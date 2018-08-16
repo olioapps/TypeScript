@@ -354,7 +354,8 @@ declare namespace FourSlashInterface {
     interface GenerateTypesOptions {
         readonly name?: string;
         readonly value: unknown;
-        readonly output: string;
+        readonly output?: string | undefined;
+        readonly outputBaseline?: string;
     }
     class edit {
         backspace(count?: number): void;

@@ -61,12 +61,12 @@ namespace ts {
         readonly kind: ValueKind.Function;
         readonly parameters: ReadonlyArray<ParameterDeclaration>;
         readonly returnType: TypeNode;
-        readonly namespaceMembers: ReadonlyArray<Statement>;
+        readonly namespaceMembers: ReadonlyArray<ValueInfo>;
     }
     interface ClassInfo extends ValueInfoBase {
         readonly kind: ValueKind.Class;
         readonly members: ReadonlyArray<ClassElementLike>;
-        readonly namespaceMembers: ReadonlyArray<Statement> ;
+        readonly namespaceMembers: ReadonlyArray<ValueInfo>;
     }
     interface NamespaceInfo extends ValueInfoBase {
         readonly kind: ValueKind.Namespace;
@@ -102,7 +102,7 @@ namespace ts {
                     name2 = "_default";
                 }
                 //test merging default export with namespace
-                return [...exportEquals, create.fn(mod, name2, parameters, returnType), ...ns2(name2, namespaceMembers, mod)];
+                return [...exportEquals, create.fn(mod, name2, parameters, returnType), ...tryCreateNamespace(name2, namespaceMembers, mod)];
             }
             case ValueKind.Class: {
                 const { name, members, namespaceMembers } = v;
@@ -112,7 +112,7 @@ namespace ts {
                     mod = [SyntaxKind.ExportKeyword, SyntaxKind.DefaultKeyword];
                     name2 = "_default";
                 }
-                return [...exportEquals, create.cls(mod, name2, members), ...ns2(name2, namespaceMembers, mod)];
+                return [...exportEquals, create.cls(mod, name2, members), ...tryCreateNamespace(name2, namespaceMembers, mod)];
             }
             case ValueKind.Namespace: {
                 const { name, members } = v;
@@ -134,13 +134,8 @@ namespace ts {
                 return Debug.assertNever(v);
         }
     }
-    //name
-    function ns2(name: string, namespaceMembers: ReadonlyArray<Statement>, mod: create.Modifiers): ReadonlyArray<Statement> {
-        return namespaceMembers.length === 0 ? emptyArray : [create.namespace(mod, name, namespaceMembers)];
-    }
-    //name
-    function ns2Declare(name: string, namespaceMembers: ReadonlyArray<Statement>): NamespaceDeclaration {
-        return create.namespace(SyntaxKind.DeclareKeyword, name, namespaceMembers);
+    function tryCreateNamespace(name: string, namespaceMembers: ReadonlyArray<ValueInfo>, mod: create.Modifiers): ReadonlyArray<Statement> {
+        return namespaceMembers.length === 0 ? emptyArray : [create.namespace(mod, name, flatMap(namespaceMembers, toNamespaceMemberStatements))];
     }
 
     function getFunctionOrClassInfo(obj: AnyFunction, name: string, recurser: Recurser): FunctionInfo | ClassInfo { //name
@@ -149,34 +144,36 @@ namespace ts {
         const classNonStaticMembers = [...(fnAst ? getConstructorFunctionInstanceMembers(fnAst) : emptyArray), ...getPrototypeMembers(obj)];
 
         const classStaticMembers: ClassElementLike[] | undefined =
-            //If !fnAst, this is a class (with no declared constructor)
             classNonStaticMembers.length !== 0 || !fnAst || fnAst.kind === SyntaxKind.Constructor ? [] : undefined;
         const namespaceMembers = flatMap(getEntriesOfObject(obj), ({ key, value }) => {
             const info = getValueInfo(key, value, recurser);
-            if (!info) return;
+            if (!info) return undefined;
             if (classStaticMembers) {
                 switch (info.kind) {
                     case ValueKind.Const: {
                         const { name, type, comment } = info;
                         classStaticMembers.push(create.property(SyntaxKind.StaticKeyword, name, type, comment));
-                        return;
+                        return undefined;
                     }
                     case ValueKind.Function: {
                         const { name, parameters, returnType, namespaceMembers: itsNamespaceMembers } = info;
-                        classStaticMembers.push(create.method(SyntaxKind.StaticKeyword, name, parameters, returnType));
-                        return itsNamespaceMembers.length ? ns2Declare(name, itsNamespaceMembers) : undefined;
+                        if (!itsNamespaceMembers.length) {
+                            classStaticMembers.push(create.method(SyntaxKind.StaticKeyword, name, parameters, returnType));
+                            return undefined;
+                        }
+                        //Else, can't merge a static method with a namespace. Must make it a function on the namespace.
                     }
                 }
             }
-            return toNamespaceMemberStatements(info);
+            return info;
         });
 
         if (classStaticMembers) {
             const members = [...classStaticMembers, ...(parameters.length === 0 ? emptyArray : [create.ctr(parameters)]), ...classNonStaticMembers];
-            return { kind: ValueKind.Class, name, members, namespaceMembers: namespaceMembers }
+            return { kind: ValueKind.Class, name, members, namespaceMembers }
         }
         else {
-            return { kind: ValueKind.Function, name, parameters, returnType, namespaceMembers: namespaceMembers };
+            return { kind: ValueKind.Function, name, parameters, returnType, namespaceMembers };
         }
     }
 
@@ -197,7 +194,7 @@ namespace ts {
         return value == null ? create.anyType() :
             typeof value === "object" ? getBuiltinType(value as object, recurser) || createTypeLiteralNode(getEntriesOfObject(value as object).map(({ key, value }) =>
                 create.propertySignature(key, recurser(value, key, () => getTypeOfValue(value, recurser), () => create.anyType())))) :
-            //fn may happen for array with function as first element. But usually handled outside. (TEST)
+            // Function may happen for array with function as first element.
             typeof value === "function" ? create.typeReference("Function") :
             createKeywordTypeNode(stringToToken(typeof value) as KeywordTypeNode["kind"]);
     }
@@ -216,20 +213,15 @@ namespace ts {
     }
 
     function getPrototypeMembers(fn: AnyFunction): ReadonlyArray<MethodDeclaration> {
-        return !fn.prototype ? emptyArray : mapDefined(Object.getOwnPropertyNames(fn.prototype).sort(), name => {
-            if (name === "constructor" || isJsPrivate(name)) return undefined;
-            const obj: unknown = Object.getOwnPropertyDescriptor(fn.prototype, name)!.value;
-            if (typeof obj !== "function") return undefined;
-            const fnAst = parseClassOrFunctionBody(obj as AnyFunction);
+        return !fn.prototype ? emptyArray : mapDefined(fn.prototype === undefined ? undefined : getEntriesOfObject(fn.prototype), ({ key, value }) => {
+            if (key === "constructor") return undefined;
+            if (typeof value !== "function") return undefined;
+            const fnAst = parseClassOrFunctionBody(value as AnyFunction);
             if (!fnAst) return undefined;
-            const { parameters, returnType } = getParameterListAndReturnType(obj as AnyFunction, fnAst);
-            const comment = isNativeFunction(obj as AnyFunction) ? " Native method; no parameter or return type inference available" : undefined;
-            return create.method(/*modifier*/ undefined, name, parameters, returnType, comment);
+            const { parameters, returnType } = getParameterListAndReturnType(value as AnyFunction, fnAst);
+            const comment = isNativeFunction(value as AnyFunction) ? " Native method; no parameter or return type inference available" : undefined;
+            return create.method(/*modifier*/ undefined, key, parameters, returnType, comment);
         });
-    }
-
-    function isJsPrivate(name: string): boolean {
-        return name.startsWith("_");
     }
 
     function getParameterListAndReturnType(obj: AnyFunction, fnAst: FunctionOrConstructor): { readonly parameters: ReadonlyArray<ParameterDeclaration>, readonly returnType: TypeNode } {
@@ -253,7 +245,7 @@ namespace ts {
     type FunctionOrConstructor = FunctionExpression | ArrowFunction | ConstructorDeclaration | MethodDeclaration;
     /** Returns 'undefined' for class with no declared constructor */
     function parseClassOrFunctionBody(fn: AnyFunction): FunctionOrConstructor | undefined {
-        const str = fn.toString();
+        const str = functionToString(fn);
         const classOrFunction = tryCast(parseExpression(str), (node): node is FunctionExpression | ArrowFunction | ClassExpression => isFunctionExpression(node) || isArrowFunction(node) || isClassExpression(node));
         return classOrFunction
             ? isClassExpression(classOrFunction) ? find(classOrFunction.members, isConstructorDeclaration) : classOrFunction
@@ -268,7 +260,11 @@ namespace ts {
     }
 
     function isNativeFunction(fn: AnyFunction): boolean {
-        return stringContains(fn.toString(), "{ [native code] }");
+        return stringContains(functionToString(fn), "{ [native code] }");
+    }
+
+    function functionToString(fn: AnyFunction): string {
+        return cast(Function.prototype.toString.call(fn), isString);
     }
 
     function inferParameterType(_fn: FunctionOrConstructor, _param: ParameterDeclaration): TypeNode {
@@ -278,34 +274,36 @@ namespace ts {
 
     // Descends through all nodes in a function, but not in nested functions.
     function forEachOwnNodeOfFunction(fnAst: FunctionOrConstructor, cb: (node: Node) => void) {
-        fnAst.body!.forEachChild(node => {
+        fnAst.body!.forEachChild(function recur(node) {
             cb(node);
-            if (!isFunctionLike(node)) node.forEachChild(cb);
+            if (!isFunctionLike(node)) node.forEachChild(recur);
         });
     }
 
-    interface ObjectEntry { readonly key: string; readonly value: unknown; }
-    function getEntriesOfObject(obj: object): ReadonlyArray<ObjectEntry> {
-        return getKeysOfObject(obj).map(key => ({ key, value: (obj as any)[key] })); //todo: fear getters
-    }
-
-    const ignoredProperties: ReadonlySet<string> = new Set(["caller", "arguments", "constructor", "super_"]);
+    const ignoredProperties: ReadonlySet<string> = new Set(["arguments", "caller", "constructor", "eval", "super_", "toString"]);
     const reservedFunctionProperties: ReadonlySet<string> = new Set(Object.getOwnPropertyNames(noop));
-    function getKeysOfObject(obj: object): ReadonlyArray<string> {
-        let keys: string[] = [];
+    interface ObjectEntry { readonly key: string, readonly value: unknown; }
+    function getEntriesOfObject(obj: object): ReadonlyArray<ObjectEntry> {
+        let entries: ObjectEntry[] = [];
         let chain = obj;
-        while (chain != null && chain != Object.prototype && chain != Function.prototype) {
-            keys.push(...Object.getOwnPropertyNames(chain));
+        while (chain != null && chain !== Object.prototype && chain !== Function.prototype) {
+            for (const key of Object.getOwnPropertyNames(chain)) {
+                if (!isJsPrivate(key) && !ignoredProperties.has(key) && (typeof obj !== "function" || !reservedFunctionProperties.has(key))) {
+                    entries.push({ key, value: Object.getOwnPropertyDescriptor(chain, key)!.value });
+                }
+            }
             chain = Object.getPrototypeOf(chain);
         }
-        return sortAndDeduplicate<string>(
-            keys.filter(k => k[0] !== "_" && !ignoredProperties.has(k) && (typeof obj !== "function" || !reservedFunctionProperties.has(k))),
-            compareStringsCaseSensitive);
+        return sortAndDeduplicate(entries, (e1, e2) => compareStringsCaseSensitive(e1.key, e2.key));
     }
 
     //mv?
     function isValidIdentifier(name: string): boolean {
         const keyword = stringToToken(name);
         return !(keyword && isNonContextualKeyword(keyword)) && isIdentifierText(name, ScriptTarget.ESNext);
+    }
+
+    function isJsPrivate(name: string): boolean {
+        return name.startsWith("_");
     }
 }
