@@ -2,7 +2,7 @@
 namespace ts {
     export function generateTypesForModule(packageName: string, moduleValue: unknown): ReadonlyArray<Statement> | undefined {
         //Note: packageName must not be "default" (test)
-        const vi = getValueInfo(codefix.moduleSpecifierToValidIdentifier(packageName, ScriptTarget.ESNext), moduleValue); //name
+        const vi = getValueInfo(codefix.moduleSpecifierToValidIdentifier(packageName, ScriptTarget.ESNext), moduleValue, /*isRoot*/ true); //name
         return vi && toStatements(vi, OutputKind.ExportEquals);
     }
 
@@ -12,25 +12,38 @@ namespace ts {
         return outputStatements && textChanges.getNewFileText(outputStatements, "\n", formatting.getFormatContext(testFormatSettings));
     }
 
-    const keyStack: string[] = []; //TODO: not global
-    const walkStack = new Set<any>();//todo: not global
-    function getValueInfo(name: string, obj: unknown): ValueInfo | undefined {
+    //name, usemore
+    function stackify<T>(obj: unknown, name: string, cbOk: () => T, cbFail: () => T): T {
         if (walkStack.has(obj) || keyStack.length > 4) {
-            //Circular or too-deep reference
-            return { kind: ValueKind.Const, name, type: create.any(), comment: `${walkStack.has(obj) ? 'Circular reference' : 'Too-deep object hierarchy'} from ${keyStack.join('.')}` }
+            return cbFail();
         }
-
-        //note this allows "default" apparently.
-        if (!ts.isIdentifierText(name, ts.ScriptTarget.ESNext)) return undefined; //only place this is done???
 
         walkStack.add(obj);
         keyStack.push(name);
-        const res: ValueInfo = typeof obj === "function" ? getFunctionOrClassInfo(obj as AnyFunction, name)
-            : typeof obj === "object" && !getBuiltinType(obj as object) ? getObjectInfo(obj as object, name)
-            : { kind: ValueKind.Const, name, type: getTypeOfValue(obj), comment: undefined };
+        const res = cbOk();
         keyStack.pop();
         walkStack.delete(obj);
         return res;
+    }
+
+    const keyStack: string[] = []; //TODO: not global
+    const walkStack = new Set<any>();//todo: not global
+    function getValueInfo(name: string, obj: unknown, isRoot = false): ValueInfo | undefined {
+        //We'll handle "Default" specially.
+        if (!isValidIdentifier(name) && name !== "default") return undefined;
+
+        return stackify(obj, name,
+            (): ValueInfo => {
+                if (typeof obj === "function") return getFunctionOrClassInfo(obj as AnyFunction, name);
+                if (typeof obj === "object" && !getBuiltinType(obj as object)) {
+                    const entries = getEntriesOfObject(obj as object);
+                    if (isRoot || entries.some(({ value }) => typeof value === "function")) {
+                        return { kind: ValueKind.Namespace, name, members: flatMap(entries, ({ key, value }) => getValueInfo(key, value)) }
+                    }
+                }
+                return { kind: ValueKind.Const, name, type: getTypeOfValue(obj), comment: undefined };
+            },
+            (): ValueInfo => ({ kind: ValueKind.Const, name, type: create.anyType(), comment: ` ${walkStack.has(obj) ? 'Circular reference' : 'Too-deep object hierarchy'} from ${keyStack.join('.')}` }));
     }
 
     const enum ValueKind { Const, Function, Class, Namespace }
@@ -123,7 +136,7 @@ namespace ts {
 
     function getFunctionOrClassInfo(obj: AnyFunction, name: string): FunctionInfo | ClassInfo { //name
         const fnAst = parseClassOrFunctionBody(obj) ;
-        const { parameters, returnType } = fnAst === undefined ? { parameters: emptyArray, returnType: create.any() } : getParameterListAndReturnType(obj, fnAst);
+        const { parameters, returnType } = fnAst === undefined ? { parameters: emptyArray, returnType: create.anyType() } : getParameterListAndReturnType(obj, fnAst);
         const classNonStaticMembers = [...(fnAst ? getConstructorFunctionInstanceMembers(fnAst) : emptyArray), ...getPrototypeMembers(obj)];
 
         const classStaticMembers: ClassElementLike[] | undefined =
@@ -158,46 +171,37 @@ namespace ts {
         }
     }
 
-    function getObjectInfo(obj: object, name: string): ConstInfo | NamespaceInfo {
-        const entries = getEntriesOfObject(obj);
-        const hasClassOrFunction = entries.some(({ value }) => typeof value === "function");
-        return hasClassOrFunction
-            ? { kind: ValueKind.Namespace, name, members: flatMap(entries, ({ key, value }) => getValueInfo(key, value)) }
-            : { kind: ValueKind.Const, name, type: getTypeOfValue(obj), comment: undefined }
-    }
-
-    function getBuiltinType(value: object): string | undefined {
+    const builtins: { readonly [name: string]: (new (...args: unknown[]) => unknown) | undefined } = { Date, RegExp, Map, Set }; //HTMLElement: (typeof HTMLElement !== 'undefined') ? HTMLElement : undefined, //todo
+    function getBuiltinType(value: object): TypeNode | undefined {
+        if (Array.isArray(value)) {
+            return createArrayTypeNode(value.length
+                ? stackify(value[0], "0", () => getTypeOfValue(value[0]), () => create.anyType())
+                : create.anyType());
+        }
         for (const builtinName in builtins) {
             if (builtins[builtinName] && value instanceof builtins[builtinName]!) {
-                return builtinName;
+                return create.typeReference(builtinName);
             }
         }
     }
 
-    //neater (check uses)
-    const builtins: { readonly [name: string]: (new (...args: unknown[]) => unknown) | undefined } = {
-        Date,
-        RegExp,
-        Map: (typeof Map !== 'undefined') ? Map : undefined,
-        //HTMLElement: (typeof HTMLElement !== 'undefined') ? HTMLElement : undefined, //todo
-    };
     function getTypeOfValue(value: unknown): TypeNode {
-        if (value == null) return create.any();
+        if (value == null) return create.anyType();
         const to = typeof value;
         if (to !== "object") {
-            //fn may happen for array with function as first element. But usually handled outside.
+            //fn may happen for array with function as first element. But usually handled outside. (TEST)
             return to === "function" ? create.typeReference("Function") : createKeywordTypeNode(ts.stringToToken(to) as KeywordTypeNode["kind"]);
         }
+        return getTypeOfObject(value as object);
+    }
 
-        if (Array.isArray(value)) return createArrayTypeNode(value.length ? getTypeOfValue(value[0]) : create.any());
-
-        //neater
-        const b = getBuiltinType(value as object);
-        if (b) return create.typeReference(b);
+    function getTypeOfObject(value: object): TypeNode {
+        const s = getBuiltinType(value as object); //name
+        if (s) return s;
 
         walkStack.add(value);
         const members = getEntriesOfObject(value as object).map(({ key, value }) =>
-            create.propertySignature(key, walkStack.has(value) ? create.any() : getTypeOfValue(value)));
+            create.propertySignature(key, walkStack.has(value) ? create.anyType() : getTypeOfValue(value)));
         walkStack.delete(value);
         return createTypeLiteralNode(members);
     }
@@ -209,7 +213,7 @@ namespace ts {
             if (ts.isAssignmentExpression(node, /*excludeCompoundAssignment*/ true) &&
                 isPropertyAccessExpression(node.left) && node.left.expression.kind === ts.SyntaxKind.ThisKeyword) {
                 const name = node.left.name.text;
-                if (!isJsPrivate(name)) members.push(create.property(/*modifier*/ undefined, name, create.any()));
+                if (!isJsPrivate(name)) members.push(create.property(/*modifier*/ undefined, name, create.anyType()));
             }
         });
         return members;
@@ -222,7 +226,7 @@ namespace ts {
             const fnAst = parseClassOrFunctionBody(obj as AnyFunction);
             if (!fnAst) return;
             const { parameters, returnType } = getParameterListAndReturnType(obj as AnyFunction, fnAst);
-            const comment = isNativeFunction(obj as AnyFunction) ? 'Native method; no parameter or return type inference available' : undefined;
+            const comment = isNativeFunction(obj as AnyFunction) ? ' Native method; no parameter or return type inference available' : undefined;
             return create.method(/*modifier*/ undefined, name, parameters, returnType, comment);
         });
     }
@@ -233,7 +237,7 @@ namespace ts {
 
     function getParameterListAndReturnType(obj: AnyFunction, fnAst: FunctionOrConstructor): { readonly parameters: ReadonlyArray<ParameterDeclaration>, readonly returnType: TypeNode } {
         if (isNativeFunction(obj)) {
-            return { parameters: fill(obj.length, i => create.parameter(`p${i}`, create.any())), returnType: create.any() };
+            return { parameters: fill(obj.length, i => create.parameter(`p${i}`, create.anyType())), returnType: create.anyType() };
         }
         let usedArguments = false, hasReturn = false;
         forEachOwnNodeOfFunction(fnAst, node => {
@@ -243,10 +247,10 @@ namespace ts {
         const parameters = fnAst.parameters
             ? [
                 ...fnAst.parameters.map(p => create.parameter(`${p.name.getText()}`, inferParameterType(fnAst, p))),
-                ...(usedArguments ? [create.restParameter('args', createArrayTypeNode(create.any()))] : emptyArray),
+                ...(usedArguments ? [create.restParameter('args', createArrayTypeNode(create.anyType()))] : emptyArray),
             ]
-            : [create.restParameter('args', createArrayTypeNode(create.any()))];
-        return { parameters, returnType: hasReturn ? create.any() : create.voidType() };
+            : [create.restParameter('args', createArrayTypeNode(create.anyType()))];
+        return { parameters, returnType: hasReturn ? create.anyType() : create.voidType() };
     }
 
     //name
@@ -286,7 +290,7 @@ namespace ts {
 
     function inferParameterType(_fn: FunctionOrConstructor, _param: ts.ParameterDeclaration): TypeNode {
         // TODO: Inspect function body for clues (see inferFromUsage.ts)
-        return create.any();
+        return create.anyType();
     }
 
     // Descends through all nodes in a function, but not in nested functions.
@@ -316,70 +320,9 @@ namespace ts {
             ts.compareStringsCaseSensitive);
     }
 
-    namespace create {
-        export type Modifiers = ReadonlyArray<Modifier["kind"]> | Modifier["kind"] | undefined;
-        function toModifiers(modifier: Modifiers): ReadonlyArray<Modifier> | undefined {
-            return modifier === undefined ? undefined :  toArray(modifier).map(createModifier) as ReadonlyArray<Modifier>;
-        }
-
-        export function constVar(modifiers: Modifiers, name: string, type: TypeNode, comment: string | undefined): VariableStatement {
-            comment;//TODO
-            return createVariableStatement(
-                toModifiers(modifiers),
-                createVariableDeclarationList([createVariableDeclaration(name, type)], NodeFlags.Const));
-        }
-        export function any(): KeywordTypeNode {
-            return createKeywordTypeNode(SyntaxKind.AnyKeyword)
-        }
-        export function voidType(): KeywordTypeNode {
-            return createKeywordTypeNode(SyntaxKind.VoidKeyword);
-        }
-        export function typeReference(name: string): TypeReferenceNode {
-            return createTypeReferenceNode(name, /*typeArguments*/ undefined);
-        }
-        export function fn(modifiers: Modifiers, name: string | undefined, parameters: ReadonlyArray<ParameterDeclaration>, returnType: TypeNode): FunctionDeclaration {
-            return createFunctionDeclaration(/*decorators*/ undefined, toModifiers(modifiers), /*asteriskToken*/ undefined, name, /*typeParameters*/ undefined, parameters, returnType, /*body*/ undefined);
-        }
-        export function cls(modifiers: Modifiers, name: string, elements: ReadonlyArray<ClassElement>): ClassDeclaration {
-            return createClassDeclaration(/*decorators*/ undefined, toModifiers(modifiers), name, /*typeParameters*/ undefined, /*heritageClauses*/ undefined, elements);
-        }
-        export function ctr(parameters: ReadonlyArray<ParameterDeclaration>): ConstructorDeclaration {
-            return createConstructor(/*decorators*/ undefined, /*modifiers*/ undefined, parameters, /*body*/ undefined);
-        }
-        export function parameter(name: string, type: TypeNode): ParameterDeclaration {
-            return createParameter(/*decorators*/ undefined, /*modifiers*/ undefined, /*dotDotDotToken*/ undefined, name, /*questionToken*/ undefined, type, /*initializer*/ undefined);
-        }
-        export function restParameter(name: string, type: TypeNode): ParameterDeclaration {
-            return createParameter(/*decorators*/ undefined, /*modifiers*/ undefined, /*dotDotDotToken*/ createToken(SyntaxKind.DotDotDotToken), name, /*questionToken*/ undefined, type, /*initializer*/ undefined);
-        }
-        export function method(modifier: Modifiers, name: string, parameters: ReadonlyArray<ParameterDeclaration>, returnType: TypeNode, comment?: string): MethodDeclaration {
-            comment; //todo
-            return createMethod(
-                /*decorators*/ undefined,
-                toModifiers(modifier),
-                /*asteriskToken*/ undefined,
-                name,
-                /*questionToken*/ undefined,
-                /*typeParameters*/ undefined,
-                parameters,
-                returnType,
-                /*body*/ undefined);
-        }
-        export function property(modifier: Modifiers, name: string, type: TypeNode, comment?: string): PropertyDeclaration {
-            comment; //todo
-            return createProperty(/*decorators*/ undefined, toModifiers(modifier), name, /*questionOrExclamationToken*/ undefined, type, /*initializer*/ undefined);
-        }
-        export function propertySignature(name: string, type: TypeNode): PropertySignature {
-            return createPropertySignature(/*modifiers*/ undefined, name, /*questionToken*/ undefined, type, /*initializer*/ undefined);
-        }
-        export function namespace(modifier: Modifiers, name: string, statements: ReadonlyArray<Statement>): NamespaceDeclaration {
-            return createModuleDeclaration(/*decorators*/ undefined, toModifiers(modifier), createIdentifier(name), createModuleBlock(statements), NodeFlags.Namespace) as NamespaceDeclaration;
-        }
-        export function exportEquals(name: string): ExportAssignment {
-            return createExportAssignment(/*decorators*/ undefined, /*modifiers*/ undefined, /*isExportEquals*/ true, createIdentifier(name));
-        }
-        export function exportDefault(name: string): ExportAssignment {
-            return createExportAssignment(/*decorators*/ undefined, /*modifiers*/ undefined, /*isExportEquals*/ false, createIdentifier(name));
-        }
+    //mv?
+    function isValidIdentifier(name: string): boolean {
+        const keyword = ts.stringToToken(name);
+        return !(keyword && ts.isNonContextualKeyword(keyword)) && ts.isIdentifierText(name, ScriptTarget.ESNext);
     }
 }

@@ -43,7 +43,10 @@ declare class example {
     x: any;
 }`,
 },
-
+{
+    value: { x: 0, export: 0 },
+    output: `export const x: number;`,
+},
 {
     value: class {
         _privateField = 0;
@@ -82,23 +85,7 @@ declare class example {
 
 {
     value: (() => {
-        const o = { a: 0, b: "", self: null };
-        o.self = o;
-        return o;
-    })(),
-    output:
-`export = example;
-declare const example: {
-    a: number;
-    b: string;
-    self: any;
-};`,
-},
-
-{
-    value: (() => {
         const o = {
-            //TODO: test funny name
             default: 0,
             a: 0,
             b: "",
@@ -123,9 +110,9 @@ export const ns1: {
 export namespace ns2 {
     function fn(x: any): void;
 }
+// Circular reference from example
 export const self: any;`,
 },
-
 
 {
     value: ({ default() {} }),
@@ -145,5 +132,22 @@ export const self: any;`,
     output:
 `export = example;
 declare const example: Date;`,
+},
+
+{
+    value: [0],
+    output:
+`export = example;
+declare const example: number[];`,
+},
+{
+    value: (() => {
+        const a = [];
+        a.push(a);
+        return a;
+    })(),
+    output:
+`export = example;
+declare const example: any[];`,
 },
 );

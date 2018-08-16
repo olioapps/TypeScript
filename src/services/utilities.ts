@@ -1813,4 +1813,76 @@ namespace ts {
         if (idx === -1) idx = change.indexOf('"' + name);
         return idx === -1 ? -1 : idx + 1;
     }
+
+    export namespace create {
+        export type Modifiers = ReadonlyArray<Modifier["kind"]> | Modifier["kind"] | undefined;
+        function toModifiers(modifier: Modifiers): ReadonlyArray<Modifier> | undefined {
+            return modifier === undefined ? undefined :  toArray(modifier).map(createModifier) as ReadonlyArray<Modifier>;
+        }
+        function addComment<T extends Node>(node: T, comment: string | undefined): T {
+            if (comment) addSyntheticLeadingComment(node, SyntaxKind.SingleLineCommentTrivia, comment);
+            return node;
+        }
+
+        export function constVar(modifiers: Modifiers, name: string, type: TypeNode, comment: string | undefined): VariableStatement {
+            return addComment(
+                createVariableStatement(
+                    toModifiers(modifiers),
+                    createVariableDeclarationList([createVariableDeclaration(name, type)], NodeFlags.Const)),
+                comment);
+        }
+        export function anyType(): KeywordTypeNode {
+            return createKeywordTypeNode(SyntaxKind.AnyKeyword)
+        }
+        export function voidType(): KeywordTypeNode {
+            return createKeywordTypeNode(SyntaxKind.VoidKeyword);
+        }
+        export function typeReference(name: string): TypeReferenceNode {
+            return createTypeReferenceNode(name, /*typeArguments*/ undefined);
+        }
+        export function fn(modifiers: Modifiers, name: string | undefined, parameters: ReadonlyArray<ParameterDeclaration>, returnType: TypeNode): FunctionDeclaration {
+            return createFunctionDeclaration(/*decorators*/ undefined, toModifiers(modifiers), /*asteriskToken*/ undefined, name, /*typeParameters*/ undefined, parameters, returnType, /*body*/ undefined);
+        }
+        export function cls(modifiers: Modifiers, name: string, elements: ReadonlyArray<ClassElement>): ClassDeclaration {
+            return createClassDeclaration(/*decorators*/ undefined, toModifiers(modifiers), name, /*typeParameters*/ undefined, /*heritageClauses*/ undefined, elements);
+        }
+        export function ctr(parameters: ReadonlyArray<ParameterDeclaration>): ConstructorDeclaration {
+            return createConstructor(/*decorators*/ undefined, /*modifiers*/ undefined, parameters, /*body*/ undefined);
+        }
+        export function parameter(name: string, type: TypeNode): ParameterDeclaration {
+            return createParameter(/*decorators*/ undefined, /*modifiers*/ undefined, /*dotDotDotToken*/ undefined, name, /*questionToken*/ undefined, type, /*initializer*/ undefined);
+        }
+        export function restParameter(name: string, type: TypeNode): ParameterDeclaration {
+            return createParameter(/*decorators*/ undefined, /*modifiers*/ undefined, /*dotDotDotToken*/ createToken(SyntaxKind.DotDotDotToken), name, /*questionToken*/ undefined, type, /*initializer*/ undefined);
+        }
+        export function method(modifier: Modifiers, name: string, parameters: ReadonlyArray<ParameterDeclaration>, returnType: TypeNode, comment?: string): MethodDeclaration {
+            const m = createMethod(
+                /*decorators*/ undefined,
+                toModifiers(modifier),
+                /*asteriskToken*/ undefined,
+                name,
+                /*questionToken*/ undefined,
+                /*typeParameters*/ undefined,
+                parameters,
+                returnType,
+                /*body*/ undefined);
+            return addComment(m, comment);
+        }
+        export function property(modifier: Modifiers, name: string, type: TypeNode, comment?: string): PropertyDeclaration {
+            comment; //todo
+            return createProperty(/*decorators*/ undefined, toModifiers(modifier), name, /*questionOrExclamationToken*/ undefined, type, /*initializer*/ undefined);
+        }
+        export function propertySignature(name: string, type: TypeNode): PropertySignature {
+            return createPropertySignature(/*modifiers*/ undefined, name, /*questionToken*/ undefined, type, /*initializer*/ undefined);
+        }
+        export function namespace(modifier: Modifiers, name: string, statements: ReadonlyArray<Statement>): NamespaceDeclaration {
+            return createModuleDeclaration(/*decorators*/ undefined, toModifiers(modifier), createIdentifier(name), createModuleBlock(statements), NodeFlags.Namespace) as NamespaceDeclaration;
+        }
+        export function exportEquals(name: string): ExportAssignment {
+            return createExportAssignment(/*decorators*/ undefined, /*modifiers*/ undefined, /*isExportEquals*/ true, createIdentifier(name));
+        }
+        export function exportDefault(name: string): ExportAssignment {
+            return createExportAssignment(/*decorators*/ undefined, /*modifiers*/ undefined, /*isExportEquals*/ false, createIdentifier(name));
+        }
+    }
 }
