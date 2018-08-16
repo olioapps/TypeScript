@@ -76,4 +76,34 @@ declare const example: Function[];`,
 `export = example;
 declare const example: any[];`,
 },
+{
+    value: (() => {
+        const o = {
+            default: 0,
+            a: 0,
+            b: "",
+            self: null,
+            fn: x => x,
+            ns1: { x: 0, default: 0 },
+            ns2: { fn: x => x, default: 0 },
+        };
+        o.self = o;
+        return o;
+    })(),
+    output:
+`export const a: number;
+export const b: string;
+export default _default;
+export const _default: number;
+export function fn(x: any): void;
+export const ns1: {
+    default: number;
+    x: number;
+};
+export namespace ns2 {
+    function fn(x: any): void;
+}
+// Circular reference from example
+export const self: any;`,
+},
 );

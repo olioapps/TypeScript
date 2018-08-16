@@ -1,6 +1,5 @@
 /* @internal */
 namespace ts {
-    //exported for tests, possibly dtsgen?
     export function generateTypesForModule(name: string, moduleValue: unknown): string | undefined {
         const outputStatements = generateTypesForModuleAsStatements(name, moduleValue);
         return outputStatements && textChanges.getNewFileText(outputStatements, "\n", formatting.getFormatContext(testFormatSettings));
@@ -8,7 +7,7 @@ namespace ts {
 
     //kill
     export function generateTypesForModuleAsStatements(packageName: string, moduleValue: unknown): ReadonlyArray<Statement> | undefined {
-        const info = getValueInfo(codefix.moduleSpecifierToValidIdentifier(packageName, ScriptTarget.ESNext), moduleValue, getRecurser(), /*isRoot*/ true); //name
+        const info = getValueInfo(codefix.moduleSpecifierToValidIdentifier(packageName, ScriptTarget.ESNext), moduleValue, getRecurser(), /*isRoot*/ true);
         return info && toStatements(info, OutputKind.ExportEquals);
     }
 
@@ -16,7 +15,6 @@ namespace ts {
     function getRecurser(): Recurser {
         const seen = new Set<unknown>();
         const nameStack: string[] = [];
-
         return (obj, name, cbOk, cbFail) => {
             if (seen.has(obj) || nameStack.length > 4) {
                 return cbFail(seen.has(obj), nameStack);
@@ -28,7 +26,7 @@ namespace ts {
             nameStack.pop();
             seen.delete(obj);
             return res;
-        }
+        };
     }
 
     function getValueInfo(name: string, value: unknown, recurser: Recurser, isRoot = false): ValueInfo | undefined {
@@ -39,7 +37,7 @@ namespace ts {
                 if (typeof value === "object" && !isBuiltinType(value as object)) {
                     const entries = getEntriesOfObject(value as object);
                     if (isRoot || entries.some(({ value }) => typeof value === "function")) {
-                        return { kind: ValueKind.Namespace, name, members: flatMap(entries, ({ key, value }) => getValueInfo(key, value, recurser)) }
+                        return { kind: ValueKind.Namespace, name, members: flatMap(entries, ({ key, value }) => getValueInfo(key, value, recurser)) };
                     }
                 }
                 return { kind: ValueKind.Const, name, type: getTypeOfValue(value, recurser), comment: undefined };
@@ -79,56 +77,37 @@ namespace ts {
     }
     function toStatements(v: ValueInfo, kind: OutputKind): ReadonlyArray<Statement> {
         let mod: create.Modifiers = kind === OutputKind.ExportEquals ? SyntaxKind.DeclareKeyword : kind === OutputKind.NamedExport ? SyntaxKind.ExportKeyword : undefined;
-        const exportEquals = kind === OutputKind.ExportEquals ? [create.exportEquals(v.name)] : emptyArray;
+        let { name } = v;
+        const isDefault = name === InternalSymbolName.Default;
+        if (isDefault) {
+            if (kind !== OutputKind.NamedExport) return emptyArray;
+            if (v.kind === ValueKind.Function || v.kind === ValueKind.Class) {
+                mod = [SyntaxKind.ExportKeyword, SyntaxKind.DefaultKeyword];
+            }
+            name = "_default";
+        }
+
+        const exportEquals = () => kind === OutputKind.ExportEquals ? [create.exportEquals(v.name)] : emptyArray;
+        const exportDefault = () => isDefault ? [create.exportDefault("_default")] : emptyArray;
+
         switch (v.kind) {
             case ValueKind.Const: {
-                let { name, type, comment } = v;
-                if (name === "default") {
-                    if (kind !== OutputKind.NamedExport) return emptyArray;
-                    //can't `export const default x: number;`. Can `decare const x: number; export default x;`
-                    return [
-                        create.exportDefault("_default"),
-                        create.constVar(mod, "_default", type, comment),
-                    ];
-                }
-                return [...exportEquals, create.constVar(mod, name, type, comment)];
+                const { type, comment } = v;
+                return [...exportEquals(), ...exportDefault(), create.constVar(mod, name, type, comment)];
             }
             case ValueKind.Function: {
-                const { name, parameters, returnType, namespaceMembers } = v;
-                let name2 = name; //!
-                if (name === "default") {
-                    if (kind !== OutputKind.NamedExport) return emptyArray;
-                    mod = [SyntaxKind.ExportKeyword, SyntaxKind.DefaultKeyword];
-                    name2 = "_default";
-                }
-                //test merging default export with namespace
-                return [...exportEquals, create.fn(mod, name2, parameters, returnType), ...tryCreateNamespace(name2, namespaceMembers, mod)];
+                const { parameters, returnType, namespaceMembers } = v;
+                return [...exportEquals(), create.fn(mod, name, parameters, returnType), ...tryCreateNamespace(name, namespaceMembers, mod)];
             }
             case ValueKind.Class: {
-                const { name, members, namespaceMembers } = v;
-                let name2 = name; //!
-                if (name === "default") { //dup
-                    if (kind !== OutputKind.NamedExport) return emptyArray;
-                    mod = [SyntaxKind.ExportKeyword, SyntaxKind.DefaultKeyword];
-                    name2 = "_default";
-                }
-                return [...exportEquals, create.cls(mod, name2, members), ...tryCreateNamespace(name2, namespaceMembers, mod)];
+                const { members, namespaceMembers } = v;
+                return [...exportEquals(), create.cls(mod, name, members), ...tryCreateNamespace(name, namespaceMembers, mod)];
             }
             case ValueKind.Namespace: {
-                const { name, members } = v;
-                if (kind === OutputKind.ExportEquals) {
-                    return flatMap(members, v => toStatements(v, OutputKind.NamedExport));
-                }
-
-                let name2 = name; //!
-                if (name === "default") { //dup
-                    if (kind !== OutputKind.NamedExport) return emptyArray;
-                    mod = [SyntaxKind.ExportKeyword, SyntaxKind.DefaultKeyword];
-                    name2 = "_default";
-                }
-                //for decault, `declare namespace _default {}; export default _default;`
-                const ns = create.namespace(mod, name2, flatMap(members, toNamespaceMemberStatements));
-                return [...(name === "default" ? [create.exportDefault("_default")] : emptyArray), ns];
+                const { members } = v;
+                return kind === OutputKind.ExportEquals
+                    ? flatMap(members, v => toStatements(v, OutputKind.NamedExport))
+                    : [...exportDefault(), create.namespace(mod, name, flatMap(members, toNamespaceMemberStatements))];
             }
             default:
                 return Debug.assertNever(v);
@@ -138,7 +117,7 @@ namespace ts {
         return namespaceMembers.length === 0 ? emptyArray : [create.namespace(mod, name, flatMap(namespaceMembers, toNamespaceMemberStatements))];
     }
 
-    function getFunctionOrClassInfo(obj: AnyFunction, name: string, recurser: Recurser): FunctionInfo | ClassInfo { //name
+    function getFunctionOrClassInfo(obj: AnyFunction, name: string, recurser: Recurser): FunctionInfo | ClassInfo {
         const fnAst = parseClassOrFunctionBody(obj) ;
         const { parameters, returnType } = fnAst === undefined ? { parameters: emptyArray, returnType: create.anyType() } : getParameterListAndReturnType(obj, fnAst);
         const classNonStaticMembers = [...(fnAst ? getConstructorFunctionInstanceMembers(fnAst) : emptyArray), ...getPrototypeMembers(obj)];
@@ -147,8 +126,7 @@ namespace ts {
             classNonStaticMembers.length !== 0 || !fnAst || fnAst.kind === SyntaxKind.Constructor ? [] : undefined;
         const namespaceMembers = flatMap(getEntriesOfObject(obj), ({ key, value }) => {
             const info = getValueInfo(key, value, recurser);
-            if (!info) return undefined;
-            if (classStaticMembers) {
+            if (classStaticMembers && info) {
                 switch (info.kind) {
                     case ValueKind.Const: {
                         const { name, type, comment } = info;
@@ -161,7 +139,7 @@ namespace ts {
                             classStaticMembers.push(create.method(SyntaxKind.StaticKeyword, name, parameters, returnType));
                             return undefined;
                         }
-                        //Else, can't merge a static method with a namespace. Must make it a function on the namespace.
+                        // Else, can't merge a static method with a namespace. Must make it a function on the namespace.
                     }
                 }
             }
@@ -170,28 +148,38 @@ namespace ts {
 
         if (classStaticMembers) {
             const members = [...classStaticMembers, ...(parameters.length === 0 ? emptyArray : [create.ctr(parameters)]), ...classNonStaticMembers];
-            return { kind: ValueKind.Class, name, members, namespaceMembers }
+            return { kind: ValueKind.Class, name, members, namespaceMembers };
         }
         else {
             return { kind: ValueKind.Function, name, parameters, returnType, namespaceMembers };
         }
     }
 
-    //HTMLElement: (typeof HTMLElement !== 'undefined') ? HTMLElement : undefined
-    const builtins: ReadonlyMap<new (...args: unknown[]) => unknown> = createMapFromTemplate({ Date, RegExp, Map, Set });
+    type AnyConstructor = new (...args: unknown[]) => unknown; //move
+    const builtins: () => ReadonlyMap<AnyConstructor> = memoize(() => {
+        const map = createMap<AnyConstructor>();
+        for (const { key, value } of getEntriesOfObject(global)) {
+            if (typeof value === "function" && typeof value.prototype === "object" && value !== Object) {
+                map.set(key, value as AnyConstructor);
+            }
+        }
+        return map;
+    });
+
     function getBuiltinType(value: object, recurser: Recurser): TypeNode | undefined {
         return isArray(value)
             ? createArrayTypeNode(value.length
                 ? recurser(value[0], "0", () => getTypeOfValue(value[0], recurser), () => create.anyType())
                 : create.anyType())
-            : forEachEntry(builtins, (builtin, builtinName) => value instanceof builtin ? create.typeReference(builtinName) : undefined);
+            : forEachEntry(builtins(), (builtin, builtinName) => value instanceof builtin ? create.typeReference(builtinName) : undefined);
     }
+
     function isBuiltinType(value: object): boolean {
-        return isArray(value) || !!forEachEntry(builtins, b => value instanceof b);
+        return isArray(value) || !!forEachEntry(builtins(), b => value instanceof b);
     }
 
     function getTypeOfValue(value: unknown, recurser: Recurser): TypeNode {
-        return value == null ? create.anyType() :
+        return isNullOrUndefined(value) ? create.anyType() :
             typeof value === "object" ? getBuiltinType(value as object, recurser) || createTypeLiteralNode(getEntriesOfObject(value as object).map(({ key, value }) =>
                 create.propertySignature(key, recurser(value, key, () => getTypeOfValue(value, recurser), () => create.anyType())))) :
             // Function may happen for array with function as first element.
@@ -282,11 +270,11 @@ namespace ts {
 
     const ignoredProperties: ReadonlySet<string> = new Set(["arguments", "caller", "constructor", "eval", "super_", "toString"]);
     const reservedFunctionProperties: ReadonlySet<string> = new Set(Object.getOwnPropertyNames(noop));
-    interface ObjectEntry { readonly key: string, readonly value: unknown; }
+    interface ObjectEntry { readonly key: string; readonly value: unknown; }
     function getEntriesOfObject(obj: object): ReadonlyArray<ObjectEntry> {
-        let entries: ObjectEntry[] = [];
+        const entries: ObjectEntry[] = [];
         let chain = obj;
-        while (chain != null && chain !== Object.prototype && chain !== Function.prototype) {
+        while (!isNullOrUndefined(chain) && chain !== Object.prototype && chain !== Function.prototype) {
             for (const key of Object.getOwnPropertyNames(chain)) {
                 if (!isJsPrivate(key) && !ignoredProperties.has(key) && (typeof obj !== "function" || !reservedFunctionProperties.has(key))) {
                     entries.push({ key, value: Object.getOwnPropertyDescriptor(chain, key)!.value });
@@ -297,7 +285,10 @@ namespace ts {
         return sortAndDeduplicate(entries, (e1, e2) => compareStringsCaseSensitive(e1.key, e2.key));
     }
 
-    //mv?
+    function isNullOrUndefined(value: unknown): value is null | undefined {
+        return value == null; // tslint:disable-line
+    }
+
     function isValidIdentifier(name: string): boolean {
         const keyword = stringToToken(name);
         return !(keyword && isNonContextualKeyword(keyword)) && isIdentifierText(name, ScriptTarget.ESNext);
