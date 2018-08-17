@@ -342,15 +342,6 @@ interface Array<T> {}`
         placeOpenBraceOnNewLineForControlBlocks: false,
     };
 
-    const notImplementedHost: LanguageServiceHost = {
-        getCompilationSettings: notImplemented,
-        getScriptFileNames: notImplemented,
-        getScriptVersion: notImplemented,
-        getScriptSnapshot: notImplemented,
-        getDefaultLibFileName: notImplemented,
-        getCurrentDirectory: notImplemented,
-    };
-
     function testConvertToAsyncFunction(caption: string, text: string, baselineFolder: string, description: DiagnosticMessage, includeLib?: boolean) {
         const t = getTest(text);
         const selectionRange = t.ranges.get("selection")!;

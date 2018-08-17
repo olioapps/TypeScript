@@ -246,6 +246,7 @@ namespace Harness.LanguageService {
         readFile(path: string): string | undefined {
             return this.sys.readFile(path);
         }
+        writeFile = ts.notImplemented; //!
 
         realpath(path: string): string {
             return this.sys.realpath(path);

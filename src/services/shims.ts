@@ -481,6 +481,8 @@ namespace ts {
         public fileExists(path: string): boolean {
             return this.shimHost.fileExists(path);
         }
+
+        writeFile = notImplemented; //kill
     }
 
     export class CoreServicesShimHostAdapter implements ParseConfigHost, ModuleResolutionHost, JsTyping.TypingResolutionHost {

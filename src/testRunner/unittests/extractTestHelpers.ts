@@ -86,13 +86,14 @@ namespace ts {
         placeOpenBraceOnNewLineForControlBlocks: false,
     };
 
-    const notImplementedHost: LanguageServiceHost = {
+    export const notImplementedHost: LanguageServiceHost = {
         getCompilationSettings: notImplemented,
         getScriptFileNames: notImplemented,
         getScriptVersion: notImplemented,
         getScriptSnapshot: notImplemented,
         getDefaultLibFileName: notImplemented,
         getCurrentDirectory: notImplemented,
+        writeFile: notImplemented,
     };
 
     export function testExtractSymbol(caption: string, text: string, baselineFolder: string, description: DiagnosticMessage, includeLib?: boolean) {

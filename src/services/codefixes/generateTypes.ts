@@ -5,8 +5,13 @@ namespace ts {
         writeFile(path: string, contents: string): void;
     }
 
-    export function generateTypesForModule(name: string, moduleValue: unknown): string | undefined {
-        const statements = toStatements(inspectValue(name, moduleValue), OutputKind.ExportEquals);
+    export function generateTypesForModule(name: string, moduleValue: unknown): string {
+        return valueInfoToDeclarationFileText(inspectValue(name, moduleValue));
+    }
+
+    //name
+    export function valueInfoToDeclarationFileText(valueInfo: ValueInfo): string {
+        const statements = toStatements(valueInfo, OutputKind.ExportEquals);
         //const outputStatements = generateTypesForModuleAsStatements(name, moduleValue);
         return textChanges.getNewFileText(statements, "\n", formatting.getFormatContext(testFormatSettings));
     }
@@ -19,10 +24,6 @@ namespace ts {
     //    }
     //    return { successMessage: `Wrote types to ${outputFileName}` };
     //}
-
-    export function doGenerateTypesFromValueInfo(_: ValueInfo, _outputFileName: string): void {
-        throw new Error("TODO");
-    }
 
     const enum OutputKind { ExportEquals, NamedExport, NamespaceMember }
     function toNamespaceMemberStatements(v: ValueInfo): ReadonlyArray<Statement> {

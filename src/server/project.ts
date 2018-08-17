@@ -354,6 +354,10 @@ namespace ts.server {
             return this.projectService.host.readFile(fileName);
         }
 
+        writeFile(fileName: string, content: string): void {
+            return this.projectService.host.writeFile(fileName, content);
+        }
+
         fileExists(file: string): boolean {
             // As an optimization, don't hit the disks for files we already know don't exist
             // (because we're watching for their creation).

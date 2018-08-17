@@ -1823,10 +1823,10 @@ namespace ts {
                 case "generate types": {
                     const { file, packageName, outputFileName } = action.options;
                     if (!host.inspectValue) return Promise.reject("Host does not implement `installPackage`");
-                    const x = host.inspectValue({ fileNameToRequire: ts.getRequirePathForInspectValue(file, packageName, host as ModuleResolutionHost) }); // TODO: GH#18217
-                    return x.then(valueInfo => {
+                    const valueInfoPromise = host.inspectValue({ fileNameToRequire: ts.getRequirePathForInspectValue(file, packageName, host as ModuleResolutionHost) }); // TODO: GH#18217
+                    return valueInfoPromise.then(valueInfo => {
                         const fullOut = toP(outputFileName);
-                        ts.doGenerateTypesFromValueInfo(valueInfo, fullOut);
+                        host.writeFile(fullOut, valueInfoToDeclarationFileText(valueInfo));
                         return { successMessage: `Wrote types to '${fullOut}'` };
                     });
                 }

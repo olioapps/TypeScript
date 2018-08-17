@@ -232,6 +232,8 @@ namespace ts {
         isKnownTypesPackageName?(name: string): boolean;
         installPackage?(options: InstallPackageOptions): Promise<ApplyCodeActionCommandResult>;
         /* @internal */ inspectValue?(options: InspectValueOptions): Promise<ValueInfo>;
+        //!
+        writeFile(fileName: string, content: string): void;
     }
 
 
