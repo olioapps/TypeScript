@@ -4,7 +4,12 @@
 
 verify.generateTypes(
 {
-    value: 0,
+    value: (() => {
+        class C {
+            delete() {};
+        }
+        return C;
+    })(),
     output:
 `?`,
 },

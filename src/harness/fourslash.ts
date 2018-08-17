@@ -4552,8 +4552,8 @@ namespace FourSlashInterface {
     export interface GenerateTypesOptions {
         readonly name?: string;
         readonly value: unknown;
-        // Exactly one of thes should be set.
-        readonly output?: string | undefined;
+        // Exactly one of these should be set.
+        readonly output?: string;
         readonly outputBaseline?: string;
     }
 

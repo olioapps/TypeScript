@@ -165,7 +165,7 @@ namespace ts.server.typingsInstaller {
                         break;
                     }
                     case "inspectValue": {
-                        const response: InspectValueResponse = { kind: ActionValueInspected, result: ts.inspectValue(req.options) };
+                        const response: InspectValueResponse = { kind: ActionValueInspected, result: ts.inspectModule(req.options) };
                         this.sendResponse(response);
                         break;
                     }

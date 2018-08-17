@@ -1824,7 +1824,7 @@ namespace ts {
             return node;
         }
 
-        export function constVar(modifiers: Modifiers, name: string, type: TypeNode, comment: string | undefined): VariableStatement {
+        export function constVar(modifiers: Modifiers, name: string, type: TypeNode, comment?: string): VariableStatement {
             return addComment(
                 createVariableStatement(
                     toModifiers(modifiers),
@@ -1840,12 +1840,15 @@ namespace ts {
         export function typeReference(name: string): TypeReferenceNode {
             return createTypeReferenceNode(name, /*typeArguments*/ undefined);
         }
+        //name
         export function fn(modifiers: Modifiers, name: string | undefined, parameters: ReadonlyArray<ParameterDeclaration>, returnType: TypeNode): FunctionDeclaration {
             return createFunctionDeclaration(/*decorators*/ undefined, toModifiers(modifiers), /*asteriskToken*/ undefined, name, /*typeParameters*/ undefined, parameters, returnType, /*body*/ undefined);
         }
+        //name
         export function cls(modifiers: Modifiers, name: string, elements: ReadonlyArray<ClassElement>): ClassDeclaration {
             return createClassDeclaration(/*decorators*/ undefined, toModifiers(modifiers), name, /*typeParameters*/ undefined, /*heritageClauses*/ undefined, elements);
         }
+        //name
         export function ctr(parameters: ReadonlyArray<ParameterDeclaration>): ConstructorDeclaration {
             return createConstructor(/*decorators*/ undefined, /*modifiers*/ undefined, parameters, /*body*/ undefined);
         }
