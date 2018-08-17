@@ -349,7 +349,6 @@ interface Array<T> {}`
         getScriptSnapshot: notImplemented,
         getDefaultLibFileName: notImplemented,
         getCurrentDirectory: notImplemented,
-        tryRequire: notImplemented, //kill (optional)
     };
 
     function testConvertToAsyncFunction(caption: string, text: string, baselineFolder: string, description: DiagnosticMessage, includeLib?: boolean) {

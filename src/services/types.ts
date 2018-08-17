@@ -231,11 +231,9 @@ namespace ts {
 
         isKnownTypesPackageName?(name: string): boolean;
         installPackage?(options: InstallPackageOptions): Promise<ApplyCodeActionCommandResult>;
-
-        //TODO: optional
-        //NOTE: should *not* fail. Use try-catch.
-        tryRequire(fileName: string): unknown;
+        /* @internal */ generateTypes?(options: GenerateTypesAction): Promise<ApplyCodeActionCommandResult>;
     }
+
 
     export interface UserPreferences {
         readonly disableSuggestions?: boolean;
@@ -538,12 +536,19 @@ namespace ts {
 
     // Publicly, this type is just `{}`. Internally it is a union of all the actions we use.
     // See `commands?: {}[]` in protocol.ts
-    export type CodeActionCommand = InstallPackageAction;
+    export type CodeActionCommand = InstallPackageAction | GenerateTypesAction;
 
     export interface InstallPackageAction {
-        /* @internal */ file: string;
-        /* @internal */ type: "install package";
-        /* @internal */ packageName: string;
+        /* @internal */ readonly type: "install package";
+        /* @internal */ readonly file: string;
+        /* @internal */ readonly packageName: string;
+    }
+
+    export interface GenerateTypesAction {
+        /* @internal */ readonly type: "generate types";
+        /* @internal */ readonly file: string; //require relative to this
+        /* @internal */ readonly packageName: string;
+        /* @internal */ readonly outputFileName: string; //The command writes to this file using io instead of using textchanges.
     }
 
     /**

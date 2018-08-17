@@ -4579,5 +4579,9 @@
     "Generate types for '{0}'": {
         "category": "Message",
         "code": 95067
+    },
+    "Generate types for all packages without types": {
+        "category": "Message",
+        "code": 95068
     }
 }

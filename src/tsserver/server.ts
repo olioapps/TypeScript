@@ -231,7 +231,7 @@ namespace ts.server {
         // buffer, but we have yet to find a way to retrieve that value.
         private static readonly maxActiveRequestCount = 10;
         private static readonly requestDelayMillis = 100;
-        private packageInstalledPromise: { resolve(value: ApplyCodeActionCommandResult): void, reject(reason: any): void } | undefined;
+        private codeActionCommandPromise: { resolve(value: ApplyCodeActionCommandResult): void, reject(reason: any): void } | undefined;
 
         constructor(
             private readonly telemetryEnabled: boolean,
@@ -263,9 +263,18 @@ namespace ts.server {
         installPackage(options: InstallPackageOptionsWithProject): Promise<ApplyCodeActionCommandResult> {
             const rq: InstallPackageRequest = { kind: "installPackage", ...options };
             this.send(rq);
-            Debug.assert(this.packageInstalledPromise === undefined);
+            Debug.assert(this.codeActionCommandPromise === undefined);
             return new Promise((resolve, reject) => {
-                this.packageInstalledPromise = { resolve, reject };
+                this.codeActionCommandPromise = { resolve, reject };
+            });
+        }
+        //mostly dup of above
+        generateTypes(options: GenerateTypesAction): Promise<ApplyCodeActionCommandResult> {
+            const rq: GenerateTypesRequest = { kind: "generateTypes", file: options.file, outputFileName: options.outputFileName, packageName: options.packageName };
+            this.send(rq);
+            Debug.assert(this.codeActionCommandPromise === undefined);
+            return new Promise((resolve, reject) => {
+                this.codeActionCommandPromise = { resolve, reject };
             });
         }
 
@@ -306,6 +315,7 @@ namespace ts.server {
                 }
             }
 
+            //!!!! THIS IS WHERE THE MAGIC HAPPENS
             this.installer = childProcess.fork(combinePaths(__dirname, "typingsInstaller.js"), args, { execArgv });
             this.installer.on("message", m => this.handleMessage(m));
 
@@ -365,12 +375,12 @@ namespace ts.server {
                 case ActionPackageInstalled: {
                     const { success, message } = response;
                     if (success) {
-                        this.packageInstalledPromise!.resolve({ successMessage: message });
+                        this.codeActionCommandPromise!.resolve({ successMessage: message });
                     }
                     else {
-                        this.packageInstalledPromise!.reject(message);
+                        this.codeActionCommandPromise!.reject(message);
                     }
-                    this.packageInstalledPromise = undefined;
+                    this.codeActionCommandPromise = undefined;
 
                     this.projectService.updateTypingsForProject(response);
 

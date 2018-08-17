@@ -1,14 +1,15 @@
 namespace ts.server {
     export interface InstallPackageOptionsWithProject extends InstallPackageOptions {
-        projectName: string;
-        projectRootPath: Path;
+        projectName: string; //never used
+        projectRootPath: Path; //never used
     }
 
     // tslint:disable-next-line interface-name (for backwards-compatibility)
     export interface ITypingsInstaller {
         isKnownTypesPackageName(name: string): boolean;
-        installPackage(options: InstallPackageOptionsWithProject): Promise<ApplyCodeActionCommandResult>;
         enqueueInstallTypingsRequest(p: Project, typeAcquisition: TypeAcquisition, unresolvedImports: SortedReadonlyArray<string> | undefined): void;
+        installPackage(options: InstallPackageOptionsWithProject): Promise<ApplyCodeActionCommandResult>;
+        generateTypes(options: GenerateTypesAction): Promise<dtsgen.ValueInfo>; //TODO: ValueInfo should not depend on ts, be processed on the way back.
         attach(projectService: ProjectService): void;
         onProjectClosed(p: Project): void;
         readonly globalTypingsCacheLocation: string | undefined;
@@ -18,6 +19,7 @@ namespace ts.server {
         isKnownTypesPackageName: returnFalse,
         // Should never be called because we never provide a types registry.
         installPackage: notImplemented,
+        generateTypes: notImplemented,
         enqueueInstallTypingsRequest: noop,
         attach: noop,
         onProjectClosed: noop,
@@ -93,6 +95,11 @@ namespace ts.server {
 
         installPackage(options: InstallPackageOptionsWithProject): Promise<ApplyCodeActionCommandResult> {
             return this.installer.installPackage(options);
+        }
+
+        generateTypes(options: GenerateTypesAction): Promise<ApplyCodeActionCommandResult> {
+            const x = this.installer.generateTypes(options);
+            return dtsgen.finish(x); //!
         }
 
         enqueueInstallTypingsForProject(project: Project, unresolvedImports: SortedReadonlyArray<string> | undefined, forceRefresh: boolean) {

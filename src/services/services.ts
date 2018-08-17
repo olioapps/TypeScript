@@ -1814,14 +1814,18 @@ namespace ts {
         }
 
         function applySingleCodeActionCommand(action: CodeActionCommand): Promise<ApplyCodeActionCommandResult> {
+            const toP = (p: string) => toPath(p, currentDirectory, getCanonicalFileName); //name
             switch (action.type) {
                 case "install package":
                     return host.installPackage
-                        ? host.installPackage({ fileName: toPath(action.file, currentDirectory, getCanonicalFileName), packageName: action.packageName })
+                        ? host.installPackage({ fileName: toP(action.file), packageName: action.packageName })
+                        : Promise.reject("Host does not implement `installPackage`");
+                case "generate types":
+                    return host.generateTypes
+                        ? host.generateTypes({ type: action.type, file: toP(action.file), packageName: action.packageName, outputFileName: toP(action.outputFileName) })
                         : Promise.reject("Host does not implement `installPackage`");
                 default:
-                    return Debug.fail();
-                    // TODO: Debug.assertNever(action); will only work if there is more than one type.
+                    return Debug.assertNever(action);
             }
         }
 

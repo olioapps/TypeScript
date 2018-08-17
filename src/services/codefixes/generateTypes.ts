@@ -1,9 +1,48 @@
 /* @internal */
 namespace ts {
+    //!
+    export interface DoGenerateTypesHost extends ModuleResolutionHost {
+        writeFile(path: string, contents: string): void;
+    }
+
     export function generateTypesForModule(name: string, moduleValue: unknown): string | undefined {
         const outputStatements = generateTypesForModuleAsStatements(name, moduleValue);
         return outputStatements && textChanges.getNewFileText(outputStatements, "\n", formatting.getFormatContext(testFormatSettings));
     }
+
+    export function doGenerateTypes({ file, packageName, outputFileName }: GenerateTypesAction, host: DoGenerateTypesHost): ApplyCodeActionCommandResult {
+        const moduleValue = requirePackage(file, packageName, host);
+        const types = generateTypesForModule(packageName, moduleValue);
+        if (types) {
+            host.writeFile(outputFileName, types);
+        }
+        return { successMessage: `Wrote types to ${outputFileName}` };
+    }
+
+    function requirePackage(fromFile: string, packageName: string, host: ModuleResolutionHost): unknown {
+        const requireFromPath = resolveJavaScriptModule(packageName, getDirectoryPath(fromFile), host);
+        try {
+            return require(requireFromPath);
+        }
+        catch {
+            return undefined;
+        }
+    }
+
+
+    //https://stackoverflow.com/questions/17581830/load-node-js-module-from-string-in-memory#17585470
+    /*function tryRequireFromString(src: string | undefined, fileName: string): unknown {
+        if (src === undefined) return undefined;
+
+        const Module = module.constructor;
+        const m = new (Module as any)();
+        try {
+            m._compile(src, fileName);
+            return m.exports;
+        } catch {
+            return undefined;
+        }
+    }*/
 
     //kill
     export function generateTypesForModuleAsStatements(packageName: string, moduleValue: unknown): ReadonlyArray<Statement> | undefined {
@@ -155,7 +194,6 @@ namespace ts {
         }
     }
 
-    type AnyConstructor = new (...args: unknown[]) => unknown; //move
     const builtins: () => ReadonlyMap<AnyConstructor> = memoize(() => {
         const map = createMap<AnyConstructor>();
         for (const { key, value } of getEntriesOfObject(global)) {

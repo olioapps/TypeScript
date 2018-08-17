@@ -164,6 +164,12 @@ namespace ts.server.typingsInstaller {
                         }
                         break;
                     }
+                    case "generateTypes": {
+                        todo;
+                        //TODO: get the valueInfo, which should not depend on anything in ts, and send it back.
+                        //then when that is received, the rest can be processed.
+                        break;
+                    }
                     default:
                         Debug.assertNever(req);
                 }

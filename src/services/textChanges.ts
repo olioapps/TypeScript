@@ -225,13 +225,6 @@ namespace ts.textChanges {
             return tracker.getChanges();
         }
 
-        //!
-        public static with2(newline: string, formatContext: formatting.FormatContext, cb: (tracker: ChangeTracker) => void): FileTextChanges[] {
-            const tracker = new ChangeTracker(newline, formatContext);
-            cb(tracker);
-            return tracker.getChanges();
-        }
-
         /** Public for tests only. Other callers should use `ChangeTracker.with`. */
         constructor(private readonly newLineCharacter: string, private readonly formatContext: formatting.FormatContext) {}
 

@@ -93,7 +93,6 @@ namespace ts {
         getScriptSnapshot: notImplemented,
         getDefaultLibFileName: notImplemented,
         getCurrentDirectory: notImplemented,
-        tryRequire: notImplemented, //remove, this is optional
     };
 
     export function testExtractSymbol(caption: string, text: string, baselineFolder: string, description: DiagnosticMessage, includeLib?: boolean) {

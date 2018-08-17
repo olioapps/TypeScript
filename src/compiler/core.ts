@@ -1536,6 +1536,7 @@ namespace ts {
      * Every function should be assignable to this, but this should not be assignable to every function.
      */
     export type AnyFunction = (...args: never[]) => void;
+    export type AnyConstructor = new (...args: unknown[]) => unknown;
 
     export namespace Debug {
         export let currentAssertionLevel = AssertionLevel.None;

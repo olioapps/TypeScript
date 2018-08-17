@@ -2,6 +2,7 @@ declare namespace ts.server {
     export type ActionSet = "action::set";
     export type ActionInvalidate = "action::invalidate";
     export type ActionPackageInstalled = "action::packageInstalled";
+    export type ActionTypesGenerated = "action::typesGenerated"; //!
     export type EventTypesRegistry = "event::typesRegistry";
     export type EventBeginInstallTypes = "event::beginInstallTypes";
     export type EventEndInstallTypes = "event::endInstallTypes";
@@ -12,7 +13,7 @@ declare namespace ts.server {
     }
 
     export interface TypingInstallerResponse {
-        readonly kind: ActionSet | ActionInvalidate | EventTypesRegistry | ActionPackageInstalled | EventBeginInstallTypes | EventEndInstallTypes | EventInitializationFailed;
+        readonly kind: ActionSet | ActionInvalidate | EventTypesRegistry | ActionPackageInstalled | ActionTypesGenerated | EventBeginInstallTypes | EventEndInstallTypes | EventInitializationFailed;
     }
 
     export interface TypingInstallerRequestWithProjectName {
@@ -20,7 +21,7 @@ declare namespace ts.server {
     }
 
     /* @internal */
-    export type TypingInstallerRequestUnion = DiscoverTypings | CloseProject | TypesRegistryRequest | InstallPackageRequest;
+    export type TypingInstallerRequestUnion = DiscoverTypings | CloseProject | TypesRegistryRequest | InstallPackageRequest | GenerateTypesRequest;
 
     export interface DiscoverTypings extends TypingInstallerRequestWithProjectName {
         readonly fileNames: string[];
@@ -47,6 +48,14 @@ declare namespace ts.server {
         readonly projectRootPath: Path;
     }
 
+    //duplicates GenerateTypesAction
+    export interface GenerateTypesRequest {
+        readonly kind: "generateTypes";
+        readonly file: string; //require relative to this
+        readonly packageName: string;
+        readonly outputFileName: string; //The command writes to this file using io instead of using textchanges.
+    }
+
     /* @internal */
     export interface TypesRegistryResponse extends TypingInstallerResponse {
         readonly kind: EventTypesRegistry;
@@ -57,6 +66,11 @@ declare namespace ts.server {
         readonly kind: ActionPackageInstalled;
         readonly success: boolean;
         readonly message: string;
+    }
+
+    //!
+    export interface TypesGeneratedResponse {
+        readonly value: unknown; //Is this even legal?
     }
 
     export interface InitializationFailedResponse extends TypingInstallerResponse {
@@ -106,5 +120,5 @@ declare namespace ts.server {
     }
 
     /* @internal */
-    export type TypingInstallerResponseUnion = SetTypings | InvalidateCachedTypings | TypesRegistryResponse | PackageInstalledResponse | InstallTypes | InitializationFailedResponse;
+    export type TypingInstallerResponseUnion = SetTypings | InvalidateCachedTypings | TypesRegistryResponse | PackageInstalledResponse | TypesGeneratedResponse | InstallTypes | InitializationFailedResponse;
 }
