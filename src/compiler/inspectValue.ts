@@ -22,24 +22,15 @@ namespace ts {
     export interface ValueInfoBase {
         readonly name: string;
     }
-    //replace with one from inspectValue
-    //string is for basic types
     export type ValueInfo = OtherInfo | ArrayInfo | FunctionOrClassInfo | ObjectInfo;
-    //interface ConstInfo extends ValueInfoBase { //name: othertypeinfo
-    //    readonly kind: ValueKind.Const;
-    //    readonly type: TypeInfo;
-    //    readonly comment: string | undefined;
-    //}
-    //name
-    export interface OtherInfo extends ValueInfoBase {
+    export interface OtherInfo extends ValueInfoBase { //name
         readonly kind: ValueKind.Const;
         readonly typeName: string;
         readonly comment?: string | undefined;
     }
     export interface FunctionOrClassInfo extends ValueInfoBase {
         readonly kind: ValueKind.FunctionOrClass;
-        readonly length: number;
-        readonly source: string; //fn.toString()
+        readonly source: string | number; //for a native function, this is the length.
         readonly prototypeMembers: ReadonlyArray<ValueInfo>;
         readonly namespaceMembers: ReadonlyArray<ValueInfo>;
     }
@@ -47,16 +38,6 @@ namespace ts {
         readonly kind: ValueKind.Array;
         readonly inner: ValueInfo;
     }
-    //interface FunctionInfo extends ValueInfoBase {
-    //    readonly kind: ValueKind.Function;
-    //    readonly text: string; //fn.toString()
-    //    readonly namespaceMembers: ReadonlyArray<ValueInfo>;
-    //}
-    //interface ClassInfo extends ValueInfoBase {
-    //    readonly kind: ValueKind.Class;
-    //    readonly members: ReadonlyArray<ClassElementLike>;
-    //    readonly namespaceMembers: ReadonlyArray<ValueInfo>;
-    //}
     export interface ObjectInfo extends ValueInfoBase {
         readonly kind: ValueKind.Object;
         readonly members: ReadonlyArray<ValueInfo>;
@@ -116,42 +97,14 @@ namespace ts {
 
     function getFunctionOrClassInfo(obj: AnyFunction, name: string, recurser: Recurser): FunctionOrClassInfo {
         const prototypeMembers = getPrototypeMembers(obj, recurser);
-
-        const namespaceMembers = flatMap(getEntriesOfObject(obj), ({ key, value }) => {
-            const info = getValueInfo(key, value, recurser);
-            //if (classStaticMembers && info) {
-            //    switch (info.kind) {
-            //        case ValueKind.Const: {
-            //            const { name, type, comment } = info;
-            //            classStaticMembers.push(create.property(SyntaxKind.StaticKeyword, name, type, comment));
-            //            return undefined;
-            //        }
-            //        case ValueKind.FunctionOrClass: {
-            //            const { name, parameters, returnType, namespaceMembers: itsNamespaceMembers } = info;
-            //            if (!itsNamespaceMembers.length) {
-            //                classStaticMembers.push(create.method(SyntaxKind.StaticKeyword, name, parameters, returnType));
-            //                return undefined;
-            //            }
-            //        }
-            //    }
-            //}
-            return info;
-        });
-
-        return { kind: ValueKind.FunctionOrClass, name, length: cast(obj.length, isNumber), source: functionToString(obj), namespaceMembers, prototypeMembers };
-
-        //if (classStaticMembers) {
-        //    const members = [...classStaticMembers, ...(parameters.length === 0 ? emptyArray : [create.ctr(parameters)]), ...classNonStaticMembers];
-        //    return { kind: ValueKind.Class, name, members, namespaceMembers };
-        //}
-        //else {
-        //    return { kind: ValueKind.FunctionOrClass, name, parameters, returnType, namespaceMembers };
-        //}
+        const namespaceMembers = flatMap(getEntriesOfObject(obj), ({ key, value }) => getValueInfo(key, value, recurser));
+        const source = functionToString(obj);
+        return { kind: ValueKind.FunctionOrClass, name, source: isNativeFunction(source) ? cast(safeGetPropertyOfObject(obj, "length"), isNumber) : source, namespaceMembers, prototypeMembers };
     }
 
     //!
-    function isNumber(x: unknown): x is number {
-        return typeof x === "number";
+    function isNativeFunction(source: string): boolean {
+        return stringContains(source, "{ [native code] }");
     }
 
     function functionToString(fn: AnyFunction): string { //inline?
@@ -167,31 +120,17 @@ namespace ts {
         }
         return map;
     });
-
     function getBuiltinType(name: string, value: object, recurser: Recurser): ValueInfo | undefined {
-        if (isArray(value)) {
-            return {
-                name,
-                kind: ValueKind.Array,
-                inner: value.length && getValueInfo("element", first(value), recurser) || anyType(name), //todo: "element" will confuse recurser
-            }
-        }
-        return forEachEntry(builtins(), (builtin, builtinName): ValueInfo | undefined => value instanceof builtin ? { kind: ValueKind.Const, name, typeName: builtinName } : undefined);
+        return isArray(value)
+            ? { name, kind: ValueKind.Array, inner: value.length && getValueInfo("element", first(value), recurser) || anyType(name) }
+            : forEachEntry(builtins(), (builtin, builtinName): ValueInfo | undefined =>
+                value instanceof builtin ? { kind: ValueKind.Const, name, typeName: builtinName } : undefined);
     }
 
     function getPrototypeMembers(fn: AnyFunction, recurser: Recurser): ReadonlyArray<ValueInfo> {
-        return !fn.prototype ? emptyArray : mapDefined(fn.prototype === undefined ? undefined : getEntriesOfObject(fn.prototype), ({ key, value }) => {
-            if (key === "constructor") return undefined;
-            return getValueInfo(key, value, recurser);
-
-            //if (key === "constructor") return undefined;
-            //if (typeof value !== "function") return undefined;
-            //const fnAst = parseClassOrFunctionBody(value as AnyFunction);
-            //if (!fnAst) return undefined;
-            //const { parameters, returnType } = getParameterListAndReturnType(value as AnyFunction, fnAst);
-            //const comment = isNativeFunction(value as AnyFunction) ? " Native method; no parameter or return type inference available" : undefined;
-            //return create.method(/*modifier*/ undefined, key, parameters, returnType, comment);
-        });
+        const prototype = fn.prototype as unknown;
+        return typeof prototype !== "object" || prototype === null ? emptyArray : mapDefined(getEntriesOfObject(prototype as object), ({ key, value }) =>
+            key === "constructor" ? undefined : getValueInfo(key, value, recurser));
     }
 
     const ignoredProperties: ReadonlySet<string> = new Set(["arguments", "caller", "constructor", "eval", "super_", "toString"]);
@@ -203,12 +142,17 @@ namespace ts {
         while (!isNullOrUndefined(chain) && chain !== Object.prototype && chain !== Function.prototype) {
             for (const key of Object.getOwnPropertyNames(chain)) {
                 if (!isJsPrivate(key) && !ignoredProperties.has(key) && (typeof obj !== "function" || !reservedFunctionProperties.has(key))) {
-                    entries.push({ key, value: Object.getOwnPropertyDescriptor(chain, key)!.value });
+                    entries.push({ key, value: safeGetPropertyOfObject(chain, key) });
                 }
             }
             chain = Object.getPrototypeOf(chain);
         }
         return sortAndDeduplicate(entries, (e1, e2) => compareStringsCaseSensitive(e1.key, e2.key));
+    }
+
+    function safeGetPropertyOfObject(obj: object, key: string): unknown { //!
+        const desc = Object.getOwnPropertyDescriptor(obj, key);
+        return desc && desc.value;
     }
 
     function isNullOrUndefined(value: unknown): value is null | undefined {

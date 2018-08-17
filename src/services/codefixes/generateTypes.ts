@@ -70,14 +70,14 @@ namespace ts {
     }
 
     //name
-    function createFunOrClass(mod: create.Modifiers, name: string, { length, source, prototypeMembers, namespaceMembers }: FunctionOrClassInfo): ReadonlyArray<Statement> {
+    function createFunOrClass(mod: create.Modifiers, name: string, { source, prototypeMembers, namespaceMembers }: FunctionOrClassInfo): ReadonlyArray<Statement> {
         const fnAst = parseClassOrFunctionBody(source);
-        const { parameters, returnType } = fnAst === undefined ? { parameters: emptyArray, returnType: create.anyType() } : getParameterListAndReturnType(fnAst, source, length);
-        const instanceMembers = fnAst ? getConstructorFunctionInstanceMembers(fnAst) : emptyArray;
+        const { parameters, returnType } = fnAst === undefined ? { parameters: emptyArray, returnType: create.anyType() } : getParameterListAndReturnType(fnAst);
+        const instanceMembers = typeof fnAst === "object" ? getConstructorFunctionInstanceMembers(fnAst) : emptyArray;
         const classNonStaticMembers: ReadonlyArray<ClassElement> = [...instanceMembers, ...mapDefined(prototypeMembers, toClassNonStaticMember)];
 
         const classStaticMembers: ClassElementLike[] | undefined =
-            classNonStaticMembers.length !== 0 || !fnAst || fnAst.kind === SyntaxKind.Constructor ? [] : undefined;
+            classNonStaticMembers.length !== 0 || !fnAst || typeof fnAst !== "number" && fnAst.kind === SyntaxKind.Constructor ? [] : undefined;
 
         //name
         const namespaceMembers2 = flatMap(namespaceMembers, info => {
@@ -95,8 +95,8 @@ namespace ts {
                         if (!info.namespaceMembers.length) { // Else, can't merge a static method with a namespace. Must make it a function on the namespace.
                             //test inner class...
                             const x = parseClassOrFunctionBody(info.source); //name
-                            if (x && x.kind !== SyntaxKind.Constructor) {
-                                const { parameters, returnType } = getParameterListAndReturnType(x, info.source, info.length); //dup?
+                            if (x && !(typeof x !== "number" && x.kind === SyntaxKind.Constructor)) {
+                                const { parameters, returnType } = getParameterListAndReturnType(x); //dup?
                                 classStaticMembers.push(create.method(SyntaxKind.StaticKeyword, info.name, parameters, returnType));
                                 return undefined;
                             }
@@ -120,8 +120,8 @@ namespace ts {
         //ignore non-functions on the prototype
         if (info.kind !== ValueKind.FunctionOrClass) return undefined;
         const x = parseClassOrFunctionBody(info.source); //name
-        if (!x || x.kind === SyntaxKind.Constructor) return undefined;
-        const { parameters, returnType } = getParameterListAndReturnType(x, info.source, info.length);
+        if (!x || (typeof x !== "number" && x.kind === SyntaxKind.Constructor)) return undefined; //dup
+        const { parameters, returnType } = getParameterListAndReturnType(x);
         return create.method(/*modifier*/ undefined, info.name, parameters, returnType); //dup-ish of other create.method
     }
 
@@ -133,24 +133,15 @@ namespace ts {
                 return createArrayTypeNode(toType(v.inner));
             case ValueKind.FunctionOrClass:
                 return create.typeReference("Function"); //normally we create a fn declaration. But for fn in array we do this.
-            case ValueKind.Object: {
-                const { members } = v;
-                return createTypeLiteralNode(members.map(m =>
-                    create.propertySignature(m.name, toType(m))));
-            }
+            case ValueKind.Object:
+                return createTypeLiteralNode(v.members.map(m => create.propertySignature(m.name, toType(m))));
             default:
                 return Debug.assertNever(v); //necessary with new lkg?
         }
     }
 
-    //kill
-    //export function generateTypesForModuleAsStatements(packageName: string, moduleValue: unknown): ReadonlyArray<Statement> | undefined {
-    //    const info = getValueInfo(codefix.moduleSpecifierToValidIdentifier(packageName, ScriptTarget.ESNext), moduleValue, getRecurser(), /*isRoot*/ true);
-    //    return info && toStatements(info, OutputKind.ExportEquals);
-    //}
-
     // Parses assignments to "this.x" in the constructor into class property declarations
-    function getConstructorFunctionInstanceMembers(fnAst: FunctionOrConstructor): ReadonlyArray<PropertyDeclaration> {
+    function getConstructorFunctionInstanceMembers(fnAst: FunctionOrConstructorNode): ReadonlyArray<PropertyDeclaration> {
         const members: PropertyDeclaration[] = [];
         forEachOwnNodeOfFunction(fnAst, node => {
             if (isAssignmentExpression(node, /*excludeCompoundAssignment*/ true) &&
@@ -162,9 +153,9 @@ namespace ts {
         return members;
     }
 
-    function getParameterListAndReturnType(fnAst: FunctionOrConstructor, source: string, length: number): { readonly parameters: ReadonlyArray<ParameterDeclaration>, readonly returnType: TypeNode } {
-        if (isNativeFunction(source)) {
-            return { parameters: fill(length, i => create.parameter(`p${i}`, create.anyType())), returnType: create.anyType() };
+    function getParameterListAndReturnType(fnAst: FunctionOrConstructor): { readonly parameters: ReadonlyArray<ParameterDeclaration>, readonly returnType: TypeNode } {
+        if (typeof fnAst === "number") {
+            return { parameters: fill(fnAst, i => create.parameter(`p${i}`, create.anyType())), returnType: create.anyType() };
         }
         let usedArguments = false, hasReturn = false;
         forEachOwnNodeOfFunction(fnAst, node => {
@@ -180,9 +171,11 @@ namespace ts {
         return { parameters, returnType: hasReturn ? create.anyType() : create.voidType() };
     }
 
-    type FunctionOrConstructor = FunctionExpression | ArrowFunction | ConstructorDeclaration | MethodDeclaration;
+    type FunctionOrConstructorNode = FunctionExpression | ArrowFunction | ConstructorDeclaration | MethodDeclaration;
+    type FunctionOrConstructor = FunctionOrConstructorNode | number;
     /** Returns 'undefined' for class with no declared constructor */
-    function parseClassOrFunctionBody(source: string): FunctionOrConstructor | undefined {
+    function parseClassOrFunctionBody(source: string | number): FunctionOrConstructor | undefined {
+        if (typeof source === "number") return source;
         const classOrFunction = tryCast(parseExpression(source), (node): node is FunctionExpression | ArrowFunction | ClassExpression => isFunctionExpression(node) || isArrowFunction(node) || isClassExpression(node));
         return classOrFunction
             ? isClassExpression(classOrFunction) ? find(classOrFunction.members, isConstructorDeclaration) : classOrFunction
@@ -202,16 +195,11 @@ namespace ts {
     }
 
     // Descends through all nodes in a function, but not in nested functions.
-    function forEachOwnNodeOfFunction(fnAst: FunctionOrConstructor, cb: (node: Node) => void) {
+    function forEachOwnNodeOfFunction(fnAst: FunctionOrConstructorNode, cb: (node: Node) => void) {
         fnAst.body!.forEachChild(function recur(node) {
             cb(node);
             if (!isFunctionLike(node)) node.forEachChild(recur);
         });
-    }
-
-    //!
-    function isNativeFunction(source: string): boolean {
-        return stringContains(source, "{ [native code] }");
     }
 
     function isValidIdentifier(name: string): boolean {
