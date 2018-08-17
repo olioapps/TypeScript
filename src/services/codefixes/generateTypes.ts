@@ -10,13 +10,22 @@ namespace ts {
         return outputStatements && textChanges.getNewFileText(outputStatements, "\n", formatting.getFormatContext(testFormatSettings));
     }
 
-    export function doGenerateTypes({ file, packageName, outputFileName }: GenerateTypesAction, host: DoGenerateTypesHost): ApplyCodeActionCommandResult {
+    export function doGenerateTypes({ file, packageName, outputFileName }: GenerateTypesOptions, host: DoGenerateTypesHost): ApplyCodeActionCommandResult {
         const moduleValue = requirePackage(file, packageName, host);
         const types = generateTypesForModule(packageName, moduleValue);
         if (types) {
             host.writeFile(outputFileName, types);
         }
         return { successMessage: `Wrote types to ${outputFileName}` };
+    }
+
+    export function doGenerateTypesFromValueInfo(_: ValueInfo, _outputFileName: string): void {
+        throw new Error("TODO");
+    }
+
+    //!
+    export function getRequirePathForInspectValue(fromFile: string, packageName: string, host: ModuleResolutionHost): string {
+        return resolveJavaScriptModule(packageName, getDirectoryPath(fromFile), host);
     }
 
     function requirePackage(fromFile: string, packageName: string, host: ModuleResolutionHost): unknown {
@@ -68,10 +77,10 @@ namespace ts {
         };
     }
 
-    function getValueInfo(name: string, value: unknown, recurser: Recurser, isRoot = false): ValueInfo | undefined {
+    function getValueInfo(name: string, value: unknown, recurser: Recurser, isRoot = false): OldValueInfo | undefined {
         if (!isValidIdentifier(name) && name !== "default") return undefined; // "default" handled specially in `toStatements`
         return recurser(value, name,
-            (): ValueInfo => {
+            (): OldValueInfo => {
                 if (typeof value === "function") return getFunctionOrClassInfo(value as AnyFunction, name, recurser);
                 if (typeof value === "object" && !isBuiltinType(value as object)) {
                     const entries = getEntriesOfObject(value as object);
@@ -81,14 +90,15 @@ namespace ts {
                 }
                 return { kind: ValueKind.Const, name, type: getTypeOfValue(value, recurser), comment: undefined };
             },
-            (isCircularReference, keyStack): ValueInfo => ({ kind: ValueKind.Const, name, type: create.anyType(), comment: ` ${isCircularReference ? "Circular reference" : "Too-deep object hierarchy"} from ${keyStack.join(".")}` }));
+            (isCircularReference, keyStack): OldValueInfo => ({ kind: ValueKind.Const, name, type: create.anyType(), comment: ` ${isCircularReference ? "Circular reference" : "Too-deep object hierarchy"} from ${keyStack.join(".")}` }));
     }
 
     const enum ValueKind { Const, Function, Class, Namespace }
     interface ValueInfoBase {
         readonly name: string;
     }
-    type ValueInfo = ConstInfo | FunctionInfo | ClassInfo | NamespaceInfo;
+    //replace with one from inspectValue
+    type OldValueInfo = ConstInfo | FunctionInfo | ClassInfo | NamespaceInfo;
     interface ConstInfo extends ValueInfoBase {
         readonly kind: ValueKind.Const;
         readonly type: TypeNode;
@@ -98,23 +108,23 @@ namespace ts {
         readonly kind: ValueKind.Function;
         readonly parameters: ReadonlyArray<ParameterDeclaration>;
         readonly returnType: TypeNode;
-        readonly namespaceMembers: ReadonlyArray<ValueInfo>;
+        readonly namespaceMembers: ReadonlyArray<OldValueInfo>;
     }
     interface ClassInfo extends ValueInfoBase {
         readonly kind: ValueKind.Class;
         readonly members: ReadonlyArray<ClassElementLike>;
-        readonly namespaceMembers: ReadonlyArray<ValueInfo>;
+        readonly namespaceMembers: ReadonlyArray<OldValueInfo>;
     }
     interface NamespaceInfo extends ValueInfoBase {
         readonly kind: ValueKind.Namespace;
-        readonly members: ReadonlyArray<ValueInfo>;
+        readonly members: ReadonlyArray<OldValueInfo>;
     }
 
     const enum OutputKind { ExportEquals, NamedExport, NamespaceMember }
-    function toNamespaceMemberStatements(v: ValueInfo): ReadonlyArray<Statement> {
+    function toNamespaceMemberStatements(v: OldValueInfo): ReadonlyArray<Statement> {
         return toStatements(v, OutputKind.NamespaceMember);
     }
-    function toStatements(v: ValueInfo, kind: OutputKind): ReadonlyArray<Statement> {
+    function toStatements(v: OldValueInfo, kind: OutputKind): ReadonlyArray<Statement> {
         let mod: create.Modifiers = kind === OutputKind.ExportEquals ? SyntaxKind.DeclareKeyword : kind === OutputKind.NamedExport ? SyntaxKind.ExportKeyword : undefined;
         let { name } = v;
         const isDefault = name === InternalSymbolName.Default;
@@ -152,7 +162,7 @@ namespace ts {
                 return Debug.assertNever(v);
         }
     }
-    function tryCreateNamespace(name: string, namespaceMembers: ReadonlyArray<ValueInfo>, mod: create.Modifiers): ReadonlyArray<Statement> {
+    function tryCreateNamespace(name: string, namespaceMembers: ReadonlyArray<OldValueInfo>, mod: create.Modifiers): ReadonlyArray<Statement> {
         return namespaceMembers.length === 0 ? emptyArray : [create.namespace(mod, name, flatMap(namespaceMembers, toNamespaceMemberStatements))];
     }
 

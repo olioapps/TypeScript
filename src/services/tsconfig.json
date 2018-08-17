@@ -54,7 +54,6 @@
         "codefixes/fixSpelling.ts",
         "codefixes/fixAddMissingMember.ts",
         "codefixes/fixCannotFindModule.ts",
-        "codefixes/generateTypes.ts",
         "codefixes/fixClassDoesntImplementInheritedAbstractMember.ts",
         "codefixes/fixClassSuperMustPrecedeThisAccess.ts",
         "codefixes/fixConstructorForDerivedNeedSuperCall.ts",
@@ -70,6 +69,7 @@
         "codefixes/inferFromUsage.ts",
         "codefixes/fixInvalidImportSyntax.ts",
         "codefixes/fixStrictClassInitialization.ts",
+        "codefixes/generateTypes.ts",
         "codefixes/requireInTs.ts",
         "codefixes/useDefaultImport.ts",
         "codefixes/fixAddModuleReferTypeMissingTypeof.ts",
@@ -83,6 +83,6 @@
         "services.ts",
         "breakpoints.ts",
         "transform.ts",
-        "shims.ts"
+        "shims.ts",
     ]
 }

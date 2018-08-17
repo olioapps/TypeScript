@@ -1819,7 +1819,7 @@ namespace ts.server {
         private applyCodeActionCommand(args: protocol.ApplyCodeActionCommandRequestArgs): {} {
             const commands = args.command as CodeActionCommand | CodeActionCommand[]; // They should be sending back the command we sent them.
             for (const command of toArray(commands)) {
-                const { project } = this.getFileAndProject(command);
+                const { project } = this.getFileAndProject(command.type === "install package" ? command : command.options); //!
                 project.getLanguageService().applyCodeActionCommand(command).then(
                     _result => { /* TODO: GH#20447 report success message? */ },
                     _error => { /* TODO: GH#20447 report errors */ });

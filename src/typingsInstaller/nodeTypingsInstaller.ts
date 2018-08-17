@@ -164,10 +164,9 @@ namespace ts.server.typingsInstaller {
                         }
                         break;
                     }
-                    case "generateTypes": {
-                        todo;
-                        //TODO: get the valueInfo, which should not depend on anything in ts, and send it back.
-                        //then when that is received, the rest can be processed.
+                    case "inspectValue": {
+                        const response: InspectValueResponse = { kind: ActionValueInspected, result: ts.inspectValue(req.options) };
+                        this.sendResponse(response);
                         break;
                     }
                     default:

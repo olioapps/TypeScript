@@ -231,7 +231,8 @@ namespace ts.server {
         // buffer, but we have yet to find a way to retrieve that value.
         private static readonly maxActiveRequestCount = 10;
         private static readonly requestDelayMillis = 100;
-        private codeActionCommandPromise: { resolve(value: ApplyCodeActionCommandResult): void, reject(reason: any): void } | undefined;
+        private codeActionCommandPromise: { resolve(value: ApplyCodeActionCommandResult): void, reject(reason: unknown): void } | undefined; //change name back
+        private inspectValuePromise: { resolve(value: ValueInfo): void, reject(reason: unknown): void } | undefined;
 
         constructor(
             private readonly telemetryEnabled: boolean,
@@ -264,17 +265,17 @@ namespace ts.server {
             const rq: InstallPackageRequest = { kind: "installPackage", ...options };
             this.send(rq);
             Debug.assert(this.codeActionCommandPromise === undefined);
-            return new Promise((resolve, reject) => {
+            return new Promise<ApplyCodeActionCommandResult>((resolve, reject) => {
                 this.codeActionCommandPromise = { resolve, reject };
             });
         }
         //mostly dup of above
-        generateTypes(options: GenerateTypesAction): Promise<ApplyCodeActionCommandResult> {
-            const rq: GenerateTypesRequest = { kind: "generateTypes", file: options.file, outputFileName: options.outputFileName, packageName: options.packageName };
+        inspectValue(options: InspectValueOptions): Promise<ValueInfo> {
+            const rq: InspectValueRequest = { kind: "inspectValue", options };
             this.send(rq);
             Debug.assert(this.codeActionCommandPromise === undefined);
-            return new Promise((resolve, reject) => {
-                this.codeActionCommandPromise = { resolve, reject };
+            return new Promise<ValueInfo>((resolve, reject) => {
+                this.inspectValuePromise = { resolve, reject };
             });
         }
 
@@ -363,7 +364,7 @@ namespace ts.server {
             }
         }
 
-        private handleMessage(response: TypesRegistryResponse | PackageInstalledResponse | SetTypings | InvalidateCachedTypings | BeginInstallTypes | EndInstallTypes | InitializationFailedResponse) {
+        private handleMessage(response: TypesRegistryResponse | PackageInstalledResponse | InspectValueResponse | SetTypings | InvalidateCachedTypings | BeginInstallTypes | EndInstallTypes | InitializationFailedResponse) {
             if (this.logger.hasLevel(LogLevel.verbose)) {
                 this.logger.info(`Received response:${stringifyIndented(response)}`);
             }
@@ -386,6 +387,12 @@ namespace ts.server {
 
                     // The behavior is the same as for setTypings, so send the same event.
                     this.event(response, "setTypings");
+                    break;
+                }
+                case ActionValueInspected: {
+                    const { result } = response;
+                    this.inspectValuePromise!.resolve(result);
+                    this.inspectValuePromise = undefined;
                     break;
                 }
                 case EventInitializationFailed:

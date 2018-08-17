@@ -1820,10 +1820,16 @@ namespace ts {
                     return host.installPackage
                         ? host.installPackage({ fileName: toP(action.file), packageName: action.packageName })
                         : Promise.reject("Host does not implement `installPackage`");
-                case "generate types":
-                    return host.generateTypes
-                        ? host.generateTypes({ type: action.type, file: toP(action.file), packageName: action.packageName, outputFileName: toP(action.outputFileName) })
-                        : Promise.reject("Host does not implement `installPackage`");
+                case "generate types": {
+                    const { file, packageName, outputFileName } = action.options;
+                    if (!host.inspectValue) return Promise.reject("Host does not implement `installPackage`");
+                    const x = host.inspectValue({ fileNameToRequire: ts.getRequirePathForInspectValue(file, packageName, host as ModuleResolutionHost) }); // TODO: GH#18217
+                    return x.then(valueInfo => {
+                        const fullOut = toP(outputFileName);
+                        ts.doGenerateTypesFromValueInfo(valueInfo, fullOut);
+                        return { successMessage: `Wrote types to '${fullOut}'` };
+                    });
+                }
                 default:
                     return Debug.assertNever(action);
             }

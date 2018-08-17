@@ -231,7 +231,7 @@ namespace ts {
 
         isKnownTypesPackageName?(name: string): boolean;
         installPackage?(options: InstallPackageOptions): Promise<ApplyCodeActionCommandResult>;
-        /* @internal */ generateTypes?(options: GenerateTypesAction): Promise<ApplyCodeActionCommandResult>;
+        /* @internal */ inspectValue?(options: InspectValueOptions): Promise<ValueInfo>;
     }
 
 
@@ -546,9 +546,13 @@ namespace ts {
 
     export interface GenerateTypesAction {
         /* @internal */ readonly type: "generate types";
-        /* @internal */ readonly file: string; //require relative to this
-        /* @internal */ readonly packageName: string;
-        /* @internal */ readonly outputFileName: string; //The command writes to this file using io instead of using textchanges.
+        /* @internal */ readonly options: GenerateTypesOptions;
+    }
+    //!
+    export interface GenerateTypesOptions {
+        readonly file: string; //file importing from
+        readonly packageName: string;
+        readonly outputFileName: string;
     }
 
     /**

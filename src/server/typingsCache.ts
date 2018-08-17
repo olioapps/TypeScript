@@ -9,7 +9,7 @@ namespace ts.server {
         isKnownTypesPackageName(name: string): boolean;
         enqueueInstallTypingsRequest(p: Project, typeAcquisition: TypeAcquisition, unresolvedImports: SortedReadonlyArray<string> | undefined): void;
         installPackage(options: InstallPackageOptionsWithProject): Promise<ApplyCodeActionCommandResult>;
-        generateTypes(options: GenerateTypesAction): Promise<dtsgen.ValueInfo>; //TODO: ValueInfo should not depend on ts, be processed on the way back.
+        inspectValue(options: InspectValueOptions): Promise<ValueInfo>;
         attach(projectService: ProjectService): void;
         onProjectClosed(p: Project): void;
         readonly globalTypingsCacheLocation: string | undefined;
@@ -19,7 +19,7 @@ namespace ts.server {
         isKnownTypesPackageName: returnFalse,
         // Should never be called because we never provide a types registry.
         installPackage: notImplemented,
-        generateTypes: notImplemented,
+        inspectValue: notImplemented,
         enqueueInstallTypingsRequest: noop,
         attach: noop,
         onProjectClosed: noop,
@@ -97,9 +97,8 @@ namespace ts.server {
             return this.installer.installPackage(options);
         }
 
-        generateTypes(options: GenerateTypesAction): Promise<ApplyCodeActionCommandResult> {
-            const x = this.installer.generateTypes(options);
-            return dtsgen.finish(x); //!
+        inspectValue(options: InspectValueOptions): Promise<ValueInfo> {
+            return this.installer.inspectValue(options);
         }
 
         enqueueInstallTypingsForProject(project: Project, unresolvedImports: SortedReadonlyArray<string> | undefined, forceRefresh: boolean) {

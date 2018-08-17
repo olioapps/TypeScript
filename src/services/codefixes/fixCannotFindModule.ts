@@ -108,7 +108,7 @@ namespace ts.codefix {
 
     //!
     function getGenerateCommand(file: string, packageName: string, outputFileName: string): GenerateTypesAction {
-        return { type: "generate types", file, packageName, outputFileName };
+        return { type: "generate types", options: { file, packageName, outputFileName } };
     }
 
     //!

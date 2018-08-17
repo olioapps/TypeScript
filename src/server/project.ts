@@ -252,8 +252,8 @@ namespace ts.server {
         installPackage(options: InstallPackageOptions): Promise<ApplyCodeActionCommandResult> {
             return this.typingsCache.installPackage({ ...options, projectName: this.projectName, projectRootPath: this.toPath(this.currentDirectory) });
         }
-        generateTypes(options: GenerateTypesAction): Promise<ApplyCodeActionCommandResult> {
-            return this.typingsCache.generateTypes(options);
+        inspectValue(options: InspectValueOptions): Promise<ValueInfo> {
+            return this.typingsCache.inspectValue(options);
         }
 
         private get typingsCache(): TypingsCache {
