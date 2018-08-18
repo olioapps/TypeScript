@@ -3671,6 +3671,10 @@
         "category": "Error",
         "code": 6205
     },
+    "Expected type of '{0}' field in 'package.json' to be 'object', got '{1}'.": {
+        "category": "Message",
+        "code": 6206
+    },
 
     "Projects to reference": {
         "category": "Message",
