@@ -1,13 +1,10 @@
 /// <reference path='fourslash.ts' />
 
-// See `generateTypes.ts` for tests of the type genration specifically.
-
 // @Filename: /node_modules/plus/index.js
 ////module.exports = function plus(x, y) { return x * y; };
 
 // @Filename: /a.ts
 ////import plus = require("plus");
-////plus(2, 2);
 
 // @Filename: /tsconfig.json
 ////{
@@ -25,8 +22,11 @@ verify.codeFix({
         "typeRoots": ["node_modules", "types"]
 }
 }`,
-        "types/plus.d.ts":
-`export = plus;
-declare function plus(x: any, y: any): any;`,
     },
+    commands: [{
+        type: "generate types",
+        file: "/a.ts",
+        outputFileName: "types/plus.d.ts",
+        packageName: "plus",
+    }],
 });

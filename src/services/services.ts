@@ -1814,24 +1814,24 @@ namespace ts {
         }
 
         function applySingleCodeActionCommand(action: CodeActionCommand): Promise<ApplyCodeActionCommandResult> {
-            const toP = (p: string) => toPath(p, currentDirectory, getCanonicalFileName); //name
+            const getPath = (path: string): Path => toPath(path, currentDirectory, getCanonicalFileName);
             switch (action.type) {
                 case "install package":
                     return host.installPackage
-                        ? host.installPackage({ fileName: toP(action.file), packageName: action.packageName })
+                        ? host.installPackage({ fileName: getPath(action.file), packageName: action.packageName })
                         : Promise.reject("Host does not implement `installPackage`");
                 case "generate types": {
-                    const { file, packageName, outputFileName } = action.options;
+                    const { fileToGenerateTypesFor, outputFileName } = action;
                     if (!host.inspectValue) return Promise.reject("Host does not implement `installPackage`");
-                    const valueInfoPromise = host.inspectValue({ fileNameToRequire: ts.getRequirePathForInspectValue(file, packageName, host as ModuleResolutionHost) }); // TODO: GH#18217
+                    const valueInfoPromise = host.inspectValue({ fileNameToRequire: fileToGenerateTypesFor });
                     return valueInfoPromise.then(valueInfo => {
-                        const fullOut = toP(outputFileName);
+                        const fullOut = getPath(outputFileName);
                         host.writeFile(fullOut, valueInfoToDeclarationFileText(valueInfo));
                         return { successMessage: `Wrote types to '${fullOut}'` };
                     });
                 }
                 default:
-                    return Debug.assertNever(action);
+                    return Debug.assertNever(action);//needed?
             }
         }
 

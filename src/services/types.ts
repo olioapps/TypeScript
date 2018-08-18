@@ -546,14 +546,13 @@ namespace ts {
         /* @internal */ readonly packageName: string;
     }
 
-    export interface GenerateTypesAction {
+    export interface GenerateTypesAction extends GenerateTypesOptions {
         /* @internal */ readonly type: "generate types";
-        /* @internal */ readonly options: GenerateTypesOptions;
     }
     //!
     export interface GenerateTypesOptions {
         readonly file: string; //file importing from
-        readonly packageName: string;
+        readonly fileToGenerateTypesFor: string;
         readonly outputFileName: string;
     }
 

@@ -59,6 +59,7 @@ declare class example {
 
             static _privateStaticField = 0;
             static staticField = 0;
+            static innerClass = class {};
         }
         (C.prototype as any).prototypeNonFunction = 0; // ignored
         (C.staticMethod as any).staticMethodProperty = 0;
@@ -77,6 +78,8 @@ declare class example {
     superMethod(): void;
 }
 declare namespace example {
+    class innerClass {
+    }
     function staticMethod(_s: any): void;
     namespace staticMethod {
         const staticMethodProperty: number;

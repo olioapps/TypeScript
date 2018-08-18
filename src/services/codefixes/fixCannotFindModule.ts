@@ -14,50 +14,53 @@ namespace ts.codefix {
         errorCodes,
         getCodeActions: context => {
             const { host, sourceFile, span: { start } } = context;
-            const packageName = getPackageName2(sourceFile, start);
+            const packageName = tryGetImportedPackageName(sourceFile, start);
             if (packageName === undefined) return undefined;
             const typesPackageName = getTypesPackageNameToInstall(packageName, host, context.errorCode);
             return typesPackageName === undefined
-                ? singleElementArray(tryGenerateTypes(context, packageName, sourceFile.fileName))
+                ? singleElementArray(tryGetGenerateTypesAction(context, packageName))
                 : [createCodeFixAction(fixName, /*changes*/ [], [Diagnostics.Install_0, typesPackageName], fixIdInstallTypesPackage, Diagnostics.Install_all_missing_types_packages, getInstallCommand(sourceFile.fileName, typesPackageName))];
         },
         fixIds: [fixIdInstallTypesPackage, fixIdGenerateTypes],
-        getAllCodeActions: context => codeFixAll(context, errorCodes, (_, diag, commands) => {
-            const packageName = getPackageName2(diag.file, diag.start);
+        getAllCodeActions: context => codeFixAll(context, errorCodes, (changes, diag, commands) => {
+            const packageName = tryGetImportedPackageName(diag.file, diag.start);
+            if (packageName === undefined) return undefined;
             switch (context.fixId) {
                 case fixIdInstallTypesPackage:
-                    const pkg = packageName && getTypesPackageNameToInstall(packageName, context.host, diag.code);
+                    const pkg = getTypesPackageNameToInstall(packageName, context.host, diag.code);
                     if (pkg) {
                         commands.push(getInstallCommand(diag.file.fileName, pkg));
                     }
                     break;
                 case fixIdGenerateTypes:
-                    throw new Error("TODO"); //!
+                    const command = tryGenerateTypes(changes, packageName, context);
+                    if (command) commands.push(command);
+                    break;
+                default:
+                    Debug.fail(`Bad fixId: ${context.fixId}`);
             }
         }),
     });
 
-    function tryGenerateTypes(context: CodeFixContextBase, packageName: string, importingFileName: string): CodeFixAction | undefined {
-        const xxx = doTryGenerateTypes(context, packageName); //name
-        if (!xxx) return undefined;
-        const { changes, outputFileName } = xxx;
-        return changes && createCodeFixAction(fixName, changes, [Diagnostics.Generate_types_for_0, packageName], fixIdGenerateTypes, Diagnostics.Generate_types_for_all_packages_without_types, getGenerateCommand(importingFileName, packageName, outputFileName));
+    function tryGetGenerateTypesAction(context: CodeFixContextBase, packageName: string): CodeFixAction | undefined {
+        let command: GenerateTypesAction | undefined;
+        const changes = textChanges.ChangeTracker.with(context, t => { command = tryGenerateTypes(t, packageName, context) });
+        return command && createCodeFixAction(fixName, changes, [Diagnostics.Generate_types_for_0, packageName], fixIdGenerateTypes, Diagnostics.Generate_types_for_all_packages_without_types, command);
     }
 
-    function doTryGenerateTypes(context: CodeFixContextBase, packageName: string): { readonly changes: FileTextChanges[], readonly outputFileName: string } | undefined {
+    function tryGenerateTypes(changes: textChanges.ChangeTracker, packageName: string, context: CodeFixContextBase): GenerateTypesAction | undefined {
         const { configFile } = context.program.getCompilerOptions();
-        if (!configFile) return undefined;
+        const typesDir = configFile && getOrCreateTypesDirectory(configFile, changes);
+        if (typesDir === undefined) return undefined;
 
-        //const generatedDtsFile = doDoTryGenerateTypes(packageName, importingFileName, context.host);
-        //if (!generatedDtsFile) return undefined;
-        let typesDir: string;
-        const changes = textChanges.ChangeTracker.with(context, t => {
-            typesDir = getOrCreateTypesDirectory(configFile, t);
-        });
-        return { changes, outputFileName: combinePaths(Debug.assertDefined(typesDir!), packageName + ".d.ts") }
+        const file = context.sourceFile.fileName;
+        const fileToGenerateTypesFor = typesDir && tryResolveJavaScriptModule(packageName, getDirectoryPath(file), context.host as ModuleResolutionHost); // TODO: GH#18217
+        return fileToGenerateTypesFor === undefined ? undefined : { type: "generate types", file, fileToGenerateTypesFor, outputFileName: combinePaths(typesDir, packageName + ".d.ts") };
     }
 
-    //If no types directory exists yet, adds it to tsconfig.json
+    //TODO: typeRoots is wrong. Change "paths" instead!!!
+    //will need to reverse-parse path mappings
+    // If no types directory exists yet, adds it to tsconfig.json
     function getOrCreateTypesDirectory(tsconfig: TsConfigSourceFile, changes: textChanges.ChangeTracker): string {
         const defaultName = "types";
 
@@ -87,7 +90,7 @@ namespace ts.codefix {
         const typeRootsArray = typeRoots.initializer;
         if (!isArrayLiteralExpression(typeRootsArray) || typeRootsArray.elements.length === 0) return defaultName;
         //If there's a non-`node_modules` entry there, put types there.
-        //todo: path normalization
+        //todo: path normalization?
         const firstTypesDirectory = find(typeRootsArray.elements, (r): r is StringLiteral => isStringLiteral(r) && r.text !== "node_modules");
         if (firstTypesDirectory) {
             return firstTypesDirectory.text;
@@ -98,22 +101,15 @@ namespace ts.codefix {
         }
     }
 
-    function findProperty(o: ObjectLiteralExpression, name: string): PropertyAssignment | undefined {
-        return find(o.properties, (p): p is PropertyAssignment => isPropertyAssignment(p) && !!p.name && isStringLiteral(p.name) && p.name.text === name)
+    function findProperty(obj: ObjectLiteralExpression, name: string): PropertyAssignment | undefined {
+        return find(obj.properties, (p): p is PropertyAssignment => isPropertyAssignment(p) && !!p.name && isStringLiteral(p.name) && p.name.text === name)
     }
 
     function getInstallCommand(fileName: string, packageName: string): InstallPackageAction {
         return { type: "install package", file: fileName, packageName };
     }
 
-    //!
-    function getGenerateCommand(file: string, packageName: string, outputFileName: string): GenerateTypesAction {
-        return { type: "generate types", options: { file, packageName, outputFileName } };
-    }
-
-    //!
-    //name
-    function getPackageName2(sourceFile: SourceFile, pos: number): string | undefined {
+    function tryGetImportedPackageName(sourceFile: SourceFile, pos: number): string | undefined {
         const moduleName = cast(getTokenAtPosition(sourceFile, pos), isStringLiteral).text;
         const { packageName } = getPackageName(moduleName); //todo: only if it is global!
         return isExternalModuleNameRelative(packageName) ? undefined : packageName;

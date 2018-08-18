@@ -2585,6 +2585,7 @@ Actual: ${stringify(fullActual)}`);
             const action = actions[index];
 
             assert.equal(action.description, options.description);
+            assert.deepEqual(action.commands, options.commands);
 
             if (options.applyChanges) {
                 for (const change of action.changes) {
@@ -4930,7 +4931,8 @@ namespace FourSlashInterface {
         errorCode?: number;
         index?: number;
         preferences?: ts.UserPreferences;
-        applyChanges?: boolean;
+        readonly applyChanges?: boolean;
+        readonly commands?: ts.CodeActionCommand[];
     }
 
     export interface VerifyCodeFixAvailableOptions {

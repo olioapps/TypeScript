@@ -1,143 +1,110 @@
 /* @internal */
 namespace ts {
-    //!
-    export interface DoGenerateTypesHost extends ModuleResolutionHost {
-        writeFile(path: string, contents: string): void;
-    }
-
     export function generateTypesForModule(name: string, moduleValue: unknown): string {
         return valueInfoToDeclarationFileText(inspectValue(name, moduleValue));
     }
 
-    //name
     export function valueInfoToDeclarationFileText(valueInfo: ValueInfo): string {
-        const statements = toStatements(valueInfo, OutputKind.ExportEquals);
-        //const outputStatements = generateTypesForModuleAsStatements(name, moduleValue);
-        return textChanges.getNewFileText(statements, "\n", formatting.getFormatContext(testFormatSettings));
+        return textChanges.getNewFileText(toStatements(valueInfo, OutputKind.ExportEquals), "\n", formatting.getFormatContext(testFormatSettings));
     }
-
-    //export function doGenerateTypes({ file, packageName, outputFileName }: GenerateTypesOptions, host: DoGenerateTypesHost): ApplyCodeActionCommandResult {
-    //    const moduleValue = requirePackage(file, packageName, host);
-    //    const types = generateTypesForModule(packageName, moduleValue);
-    //    if (types) {
-    //        host.writeFile(outputFileName, types);
-    //    }
-    //    return { successMessage: `Wrote types to ${outputFileName}` };
-    //}
 
     const enum OutputKind { ExportEquals, NamedExport, NamespaceMember }
-    function toNamespaceMemberStatements(v: ValueInfo): ReadonlyArray<Statement> {
-        return toStatements(v, OutputKind.NamespaceMember);
+    function toNamespaceMemberStatements(info: ValueInfo): ReadonlyArray<Statement> {
+        return toStatements(info, OutputKind.NamespaceMember);
     }
-    function toStatements(v: ValueInfo, kind: OutputKind): ReadonlyArray<Statement> {
-        let { name } = v;
-        if (!isValidIdentifier(name) && name !== "default") return emptyArray;
+    function toStatements(info: ValueInfo, kind: OutputKind): ReadonlyArray<Statement> {
+        const isDefault = info.name === InternalSymbolName.Default;
+        const name = isDefault ? "_default" : info.name;
+        if (!isValidIdentifier(name) || isDefault && kind !== OutputKind.NamedExport) return emptyArray;
 
-        const isDefault = name === InternalSymbolName.Default;
-        let mod: create.Modifiers = kind === OutputKind.ExportEquals ? SyntaxKind.DeclareKeyword : kind === OutputKind.NamedExport ? SyntaxKind.ExportKeyword : undefined;
-        if (isDefault) {
-            if (kind !== OutputKind.NamedExport) return emptyArray;
-            if (v.kind === ValueKind.FunctionOrClass) {
-                mod = [SyntaxKind.ExportKeyword, SyntaxKind.DefaultKeyword]; //do without mutation
-            }
-            name = "_default";
-        }
-        const exportEquals = () => kind === OutputKind.ExportEquals ? [create.exportEquals(v.name)] : emptyArray;
+        const modifiers: create.Modifiers = isDefault && info.kind === ValueKind.FunctionOrClass
+            ? [SyntaxKind.ExportKeyword, SyntaxKind.DefaultKeyword]
+            : kind === OutputKind.ExportEquals ? SyntaxKind.DeclareKeyword : kind === OutputKind.NamedExport ? SyntaxKind.ExportKeyword : undefined;
+        const exportEquals = () => kind === OutputKind.ExportEquals ? [create.exportEquals(info.name)] : emptyArray;
         const exportDefault = () => isDefault ? [create.exportDefault("_default")] : emptyArray;
 
-        switch (v.kind) {
+        switch (info.kind) {
+            case ValueKind.FunctionOrClass:
+                return [...exportEquals(), ...functionOrClassToStatements(modifiers, name, info)];
+            case ValueKind.Object:
+                const { members } = info;
+                if (kind === OutputKind.ExportEquals) {
+                    return flatMap(members, v => toStatements(v, OutputKind.NamedExport));
+                }
+                if (members.some(m => m.kind === ValueKind.FunctionOrClass)) {
+                    // If some member is a function, use a namespace so it gets a FunctionDeclaration or ClassDeclaration.
+                    return [...exportDefault(), create.namespace(modifiers, name, flatMap(members, toNamespaceMemberStatements))];
+                }
+                // falls through
             case ValueKind.Const:
             case ValueKind.Array:
-                return conzt();
-            case ValueKind.FunctionOrClass:
-                return [...exportEquals(), ...createFunOrClass(mod, name, v)]
-            case ValueKind.Object: {
-                const { members } = v;
-                return kind === OutputKind.ExportEquals
-                    ? flatMap(members, v => toStatements(v, OutputKind.NamedExport))
-                    //if some member is a fn/class, use namespace, else use type decl
-                    : members.some(m => m.kind === ValueKind.FunctionOrClass)
-                        ? [...exportDefault(), create.namespace(mod, name, flatMap(members, toNamespaceMemberStatements))]
-                        : conzt();
-            }
+                return [...exportEquals(), ...exportDefault(), create.constVar(modifiers, name, toType(info), info.kind === ValueKind.Const ? info.comment : undefined)];
             default:
-                return Debug.assertNever(v);
-        }
-
-        //!
-        function conzt(): ReadonlyArray<Statement> {
-            return [...exportEquals(), ...exportDefault(), create.constVar(mod, name, toType(v), v.kind === ValueKind.Const ? v.comment : undefined)];
+                return Debug.assertNever(info); //unnecessary now?
         }
     }
 
-    //name
-    function createFunOrClass(mod: create.Modifiers, name: string, { source, prototypeMembers, namespaceMembers }: FunctionOrClassInfo): ReadonlyArray<Statement> {
+    function functionOrClassToStatements(modifiers: create.Modifiers, name: string, { source, prototypeMembers, namespaceMembers }: ValueInfoFunctionOrClass): ReadonlyArray<Statement> {
         const fnAst = parseClassOrFunctionBody(source);
-        const { parameters, returnType } = fnAst === undefined ? { parameters: emptyArray, returnType: create.anyType() } : getParameterListAndReturnType(fnAst);
+        const { parameters, returnType } = fnAst === undefined ? { parameters: emptyArray, returnType: create.anyType() } : getParametersAndReturnType(fnAst);
         const instanceMembers = typeof fnAst === "object" ? getConstructorFunctionInstanceMembers(fnAst) : emptyArray;
-        const classNonStaticMembers: ReadonlyArray<ClassElement> = [...instanceMembers, ...mapDefined(prototypeMembers, toClassNonStaticMember)];
+        // ignore non-functions on the prototype
+        const protoMembers = mapDefined(prototypeMembers, info => info.kind === ValueKind.FunctionOrClass ? tryGetMethod(info) : undefined);
+        const classNonStaticMembers: ReadonlyArray<ClassElement> = [...instanceMembers, ...protoMembers];
 
         const classStaticMembers: ClassElementLike[] | undefined =
             classNonStaticMembers.length !== 0 || !fnAst || typeof fnAst !== "number" && fnAst.kind === SyntaxKind.Constructor ? [] : undefined;
 
-        //name
-        const namespaceMembers2 = flatMap(namespaceMembers, info => {
+        const namespaceStatements = flatMap(namespaceMembers, info => {
             if (classStaticMembers) {
                 switch (info.kind) {
                     case ValueKind.Object:
                         if (info.members.some(m => m.kind === ValueKind.FunctionOrClass)) {
-                            break; //use a namespace (test)
+                            break;
                         }
+                        // falls through
                     case ValueKind.Array:
                     case ValueKind.Const:
                         classStaticMembers.push(create.property(SyntaxKind.StaticKeyword, info.name, toType(info), info.kind === ValueKind.Const ? info.comment : undefined));
                         return undefined;
                     case ValueKind.FunctionOrClass:
                         if (!info.namespaceMembers.length) { // Else, can't merge a static method with a namespace. Must make it a function on the namespace.
-                            //test inner class...
-                            const x = parseClassOrFunctionBody(info.source); //name
-                            if (x && !(typeof x !== "number" && x.kind === SyntaxKind.Constructor)) {
-                                const { parameters, returnType } = getParameterListAndReturnType(x); //dup?
-                                classStaticMembers.push(create.method(SyntaxKind.StaticKeyword, info.name, parameters, returnType));
+                            const sig = tryGetMethod(info, SyntaxKind.StaticKeyword);
+                            if (sig) {
+                                classStaticMembers.push(sig);
                                 return undefined;
                             }
                         }
                 }
             }
             return toStatements(info, OutputKind.NamespaceMember);
-            //return info; //so, do nothing if not a class...
         });
 
-        const ns = namespaceMembers2.length === 0 ? emptyArray : [create.namespace(mod, name, namespaceMembers2)];
-        //ternary
-        if (classStaticMembers) {
-            return [create.cls(mod, name,  [...classStaticMembers, ...(parameters.length ? [create.ctr(parameters)] : emptyArray), ...classNonStaticMembers]), ...ns];
-        } else {
-            return [create.fn(mod, name, parameters, returnType), ...ns]
-        }
+        const decl = classStaticMembers
+            ? create.cls(modifiers, name, [...classStaticMembers, ...(parameters.length ? [create.ctr(parameters)] : emptyArray), ...classNonStaticMembers])
+            : create.fn(modifiers, name, parameters, returnType);
+        return [decl, ...(namespaceStatements.length === 0 ? emptyArray : [create.namespace(modifiers, name, namespaceStatements)])];
     }
 
-    function toClassNonStaticMember(info: ValueInfo): ClassElement | undefined {
-        //ignore non-functions on the prototype
-        if (info.kind !== ValueKind.FunctionOrClass) return undefined;
-        const x = parseClassOrFunctionBody(info.source); //name
-        if (!x || (typeof x !== "number" && x.kind === SyntaxKind.Constructor)) return undefined; //dup
-        const { parameters, returnType } = getParameterListAndReturnType(x);
-        return create.method(/*modifier*/ undefined, info.name, parameters, returnType); //dup-ish of other create.method
+    function tryGetMethod({ name, source }: ValueInfoFunctionOrClass, modifiers?: create.Modifiers): MethodDeclaration | undefined {
+        const fnAst = parseClassOrFunctionBody(source);
+        if (!fnAst || (typeof fnAst !== "number" && fnAst.kind === SyntaxKind.Constructor)) return undefined;
+        const sig = getParametersAndReturnType(fnAst);
+        return sig && create.method(modifiers, name, sig.parameters, sig.returnType);
     }
 
-    function toType(v: ValueInfo): TypeNode {
-        switch (v.kind) {
+    function toType(info: ValueInfo): TypeNode {
+        switch (info.kind) {
             case ValueKind.Const:
-                return create.typeReference(v.typeName);
+                return create.typeReference(info.typeName);
             case ValueKind.Array:
-                return createArrayTypeNode(toType(v.inner));
+                return createArrayTypeNode(toType(info.inner));
             case ValueKind.FunctionOrClass:
-                return create.typeReference("Function"); //normally we create a fn declaration. But for fn in array we do this.
+                return create.typeReference("Function"); // Normally we create a FunctionDeclaration, but this can happen for a function in an array.
             case ValueKind.Object:
-                return createTypeLiteralNode(v.members.map(m => create.propertySignature(m.name, toType(m))));
+                return createTypeLiteralNode(info.members.map(m => create.propertySignature(m.name, toType(m))));
             default:
-                return Debug.assertNever(v); //necessary with new lkg?
+                return Debug.assertNever(info); //necessary with new lkg?
         }
     }
 
@@ -154,7 +121,8 @@ namespace ts {
         return members;
     }
 
-    function getParameterListAndReturnType(fnAst: FunctionOrConstructor): { readonly parameters: ReadonlyArray<ParameterDeclaration>, readonly returnType: TypeNode } {
+    interface ParametersAndReturnType { readonly parameters: ReadonlyArray<ParameterDeclaration>; readonly returnType: TypeNode; }
+    function getParametersAndReturnType(fnAst: FunctionOrConstructor): ParametersAndReturnType {
         if (typeof fnAst === "number") {
             return { parameters: fill(fnAst, i => create.parameter(`p${i}`, create.anyType())), returnType: create.anyType() };
         }
@@ -173,7 +141,7 @@ namespace ts {
     }
 
     type FunctionOrConstructorNode = FunctionExpression | ArrowFunction | ConstructorDeclaration | MethodDeclaration;
-    type FunctionOrConstructor = FunctionOrConstructorNode | number;
+    type FunctionOrConstructor = FunctionOrConstructorNode | number; // number is for native function
     /** Returns 'undefined' for class with no declared constructor */
     function parseClassOrFunctionBody(source: string | number): FunctionOrConstructor | undefined {
         if (typeof source === "number") return source;
