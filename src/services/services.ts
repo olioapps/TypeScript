@@ -1307,7 +1307,7 @@ namespace ts {
 
             function fileExists(fileName: string) {
                 const path = toPath(fileName, currentDirectory, getCanonicalFileName);
-                const entry = hostCache.getEntryByPath(path);
+                const entry = hostCache && hostCache.getEntryByPath(path);
                 return entry ?
                     !isString(entry) :
                     (host.fileExists && host.fileExists(fileName));
